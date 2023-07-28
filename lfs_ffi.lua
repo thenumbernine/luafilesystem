@@ -26,9 +26,7 @@ if not pcall(ffi.typeof, "ssize_t") then
     ffi.cdef("typedef intptr_t ssize_t")
 end
 
-ffi.cdef([[
-    char* strerror(int errnum);
-]])
+require 'ffi.c.string'	-- strerror
 
 local function errno()
     return ffi_str(lib.strerror(ffi.errno()))
@@ -43,24 +41,26 @@ local wchar_t
 local win_utf8_to_unicode
 local win_unicode_to_utf8
 if OS == 'Windows' then
-    MAXPATH = 260
-    ffi.cdef([[
-        typedef int mbstate_t;
-        /*
-        In VC2015, M$ change the definition of mbstate_t to this and breaks the ABI.
-        */
-        typedef struct _Mbstatet
-        { // state of a multibyte translation
-            unsigned long _Wchar;
-            unsigned short _Byte, _State;
-        } _Mbstatet;
-        typedef _Mbstatet mbstate_t;
+    -- in Windows this is in ...
+	-- stdio.h: #define L_tmpnam 260 // MAX_PATH
+	-- stdlib.h: #define _MAX_PATH 260
+	-- in Linux this is in ...
+	-- dirent.h: _POSIX_PATH_MAX = 256
+	-- limits.h: _POSIX_PATH_MAX = 256
+	-- linux/limits.h: PATH_MAX = 4096 (reached via #include <limits.h>)
+	-- stdio.h: FILENAME_MAX = 4096
+	MAXPATH = 260
 
+   	-- in Windows:
+	--  corecrt.h: defines mbstate_t
+	require 'ffi.c.stddef'	-- mbstate_t, _MBstatet
+
+	ffi.cdef[[
         size_t mbrtowc(wchar_t* pwc,
             const char* s,
             size_t n,
             mbstate_t* ps);
-    ]])
+    ]]
 
     function wchar_t(s)
         local mbstate = ffi.new('mbstate_t[1]')
@@ -80,7 +80,8 @@ if OS == 'Windows' then
     end
 
 elseif OS == 'Linux' then
-    MAXPATH = 4096
+    require 'ffi.c.limits'	-- #include <limits.h>
+	MAXPATH = ffi.C.PATH_MAX
 else
     MAXPATH = 1024
 end
@@ -88,7 +89,10 @@ end
 -- misc
 if OS == "Windows" then
     local utime_def
-    if IS_64_BIT then
+    -- time_t is in corecrt.h
+	-- probably included from time.h or something
+	-- _utime64 / _utime32 is in sys/utime.h
+	if IS_64_BIT then
         utime_def = [[
             typedef __int64 time_t;
             struct __utimebuf64 {
@@ -106,12 +110,15 @@ if OS == "Windows" then
                 time_t modtime;
             };
             typedef struct __utimebuf32 utimebuf;
-            int _utime632(unsigned char *file, utimebuf *times);
+            int _utime32(unsigned char *file, utimebuf *times);
         ]]
     end
 
-    ffi.cdef([[
-        char *_getcwd(char *buf, size_t size);
+	-- Windows
+	-- some in direct.h
+    -- some in stdio.h
+	ffi.cdef([[
+        char *_getcwd(char *buf, size_t size);			//direct.h
         wchar_t *_wgetcwd(wchar_t *buf, size_t size);
         int _chdir(const char *path);
         int _wchdir(const wchar_t *path);
@@ -129,15 +136,17 @@ if OS == "Windows" then
             DWORD dwFlags
         );
 
-        int _fileno(struct FILE *stream);
-        int _setmode(int fd, int mode);
+        int _fileno(struct FILE *stream);	//stdio.h
+        int _setmode(int fd, int mode);		//corecrt_io.h
     ]])
-    
+
     ffi.cdef([[
 
-    size_t wcslen(const wchar_t *str);
+    size_t wcslen(const wchar_t *str);		//corecrt_wstring.h
     wchar_t *wcsncpy(wchar_t *strDest, const wchar_t *strSource, size_t count);
-    
+
+
+   	// where?
     int WideCharToMultiByte(
         unsigned int     CodePage,
         DWORD    dwFlags,
@@ -147,7 +156,8 @@ if OS == "Windows" then
         int      cbMultiByte,
         const char*   lpDefaultChar,
         int*   lpUsedDefaultChar);
-    
+
+   	// where?
     int MultiByteToWideChar(
         unsigned int     CodePage,
         DWORD    dwFlags,
@@ -155,12 +165,15 @@ if OS == "Windows" then
         int      cbMultiByte,
         wchar_t*   lpWideCharStr,
         int      cchWideChar);
-    
+
     ]])
     ffi.cdef[[
-        
+
+		// where?
         uint32_t GetLastError();
-        uint32_t FormatMessageA(
+
+		// where?
+		uint32_t FormatMessageA(
             uint32_t dwFlags,
             const void* lpSource,
             uint32_t dwMessageId,
@@ -344,7 +357,8 @@ if OS == "Windows" then
     local wfindfirst
     local wfindnext
     if IS_64_BIT then
-        ffi.cdef([[
+        -- corecrt_io.h / corecrt_wio.h
+		ffi.cdef([[
             typedef struct _finddata64_t {
                 uint64_t  attrib;
                 uint64_t  time_create;
@@ -364,9 +378,9 @@ if OS == "Windows" then
                 uint64_t  size;
                 wchar_t      name[]] .. MAXPATH ..[[];
             } _wfinddata_t;
-            intptr_t _wfindfirst64(const wchar_t *filespec, struct _wfinddata_t *fileinfo);  
-            int _wfindnext64(intptr_t handle,struct _wfinddata_t *fileinfo);  
-                                                              
+            intptr_t _wfindfirst64(const wchar_t *filespec, struct _wfinddata_t *fileinfo);
+            int _wfindnext64(intptr_t handle,struct _wfinddata_t *fileinfo);
+
         ]])
         findfirst = lib._findfirst64
         findnext = lib._findnext64
@@ -384,10 +398,10 @@ if OS == "Windows" then
             } _finddata_t;
             intptr_t _findfirst32(const char* filespec, _finddata_t* fileinfo);
             int _findnext32(intptr_t handle, _finddata_t *fileinfo);
-            
+
             intptr_t _findfirst(const char* filespec, _finddata_t* fileinfo);
             int _findnext(intptr_t handle, _finddata_t *fileinfo);
-            
+
             typedef struct _wfinddata_t {
                 uint32_t  attrib;
                 uint32_t  time_create;
@@ -396,23 +410,23 @@ if OS == "Windows" then
                 uint32_t  size;
                 wchar_t      name[]] .. MAXPATH ..[[];
             } _wfinddata_t;
-            intptr_t _wfindfirst(  
-            const wchar_t *filespec,  
-            struct _wfinddata_t *fileinfo   
+            intptr_t _wfindfirst(
+            const wchar_t *filespec,
+            struct _wfinddata_t *fileinfo
             );
-            intptr_t _wfindfirst32(  
-                const wchar_t *filespec,  
+            intptr_t _wfindfirst32(
+                const wchar_t *filespec,
                 struct _wfinddata_t *fileinfo
-            );  
-            
-            int _wfindnext(  
-                intptr_t handle,  
-                struct _wfinddata_t *fileinfo   
-            );  
-            int _wfindnext32(  
-                intptr_t handle,  
-                struct _wfinddata_t *fileinfo   
-            );  
+            );
+
+            int _wfindnext(
+                intptr_t handle,
+                struct _wfinddata_t *fileinfo
+            );
+            int _wfindnext32(
+                intptr_t handle,
+                struct _wfinddata_t *fileinfo
+            );
             int _findclose(intptr_t handle);
         ]])
         local ok
@@ -462,7 +476,7 @@ if OS == "Windows" then
         close(dir)
         return nil
     end
-    
+
     local function witerator(dir)
         if dir.closed ~= false then error("closed directory") end
         local entry = ffi.new("_wfinddata_t")
@@ -501,7 +515,7 @@ if OS == "Windows" then
         }, dirmeta)
         return iterator, dir_obj
     end
-    
+
     local wdirmeta = {__index = {
         next = witerator,
         close = close,
@@ -517,7 +531,7 @@ if OS == "Windows" then
         }, wdirmeta)
         return witerator, dir_obj
     end
-    
+
     function _M.dir(path)
         if _M.unicode then
             return _M.wdir(path)
@@ -525,12 +539,15 @@ if OS == "Windows" then
             return _M.sdir(path)
         end
     end
-    
+
     ffi.cdef([[
+		// stdio.h
         int _fileno(struct FILE *stream);
         int fseek(struct FILE *stream, long offset, int origin);
         long ftell(struct FILE *stream);
-        int _locking(int fd, int mode, long nbytes);
+
+		// corecrt.h
+		int _locking(int fd, int mode, long nbytes);
     ]])
 
     local mode_ltype_map = {
@@ -913,9 +930,7 @@ end
 local stat_func
 local lstat_func
 if OS == 'Linux' then
-    ffi.cdef([[
-        long syscall(int number, ...);
-    ]])
+    require 'ffi.c.unistd'	-- syscall
     local ARCH = ffi.arch
     -- Taken from justincormack/ljsyscall
     local stat_syscall_num
@@ -1095,7 +1110,8 @@ if OS == 'Linux' then
         lstat_func = stat_func
     end
 elseif OS == 'Windows' then
-    ffi.cdef([[
+    -- sys/stat.h
+	ffi.cdef([[
         typedef __int64 __time64_t;
         typedef struct {
             unsigned int        st_dev;
@@ -1112,7 +1128,7 @@ elseif OS == 'Windows' then
         } lfs_stat;
 
         int _stat64(const char *path, lfs_stat *buffer);
-        int _wstat64(const wchar_t *path, lfs_stat *buffer);      
+        int _wstat64(const wchar_t *path, lfs_stat *buffer);
     ]])
 
     stat_func = function(filepath, buf)
