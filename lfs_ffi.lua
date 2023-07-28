@@ -90,32 +90,21 @@ else
 end
 
 -- misc
+local utimbuftype
 if OS == "Windows" then
-    local utime_def
-    -- time_t is in corecrt.h
-	-- probably included from time.h or something
+    -- Windows
+	-- struct __utimbuf64, _utime64
+	-- struct __utimbuf32, _utime32
+	require 'ffi.c.sys.utime'
+    
+	-- time_t is in corecrt.h
+	-- included from sys/utime.h
 	-- _utime64 / _utime32 is in sys/utime.h
 	-- _wutime is in sys/utime.h or wchar.h
 	if IS_64_BIT then
-        utime_def = [[
-            typedef __int64 time_t;
-            struct __utimebuf64 {
-                time_t actime;
-                time_t modtime;
-            };
-            typedef struct __utimebuf64 utimebuf;
-            int _utime64(unsigned char *file, utimebuf *times);
-        ]]
+        utimbuftype = 'struct __utimbuf64'
     else
-        utime_def = [[
-            typedef __int32 time_t;
-            struct __utimebuf32 {
-                time_t actime;
-                time_t modtime;
-            };
-            typedef struct __utimebuf32 utimebuf;
-            int _utime32(unsigned char *file, utimebuf *times);
-        ]]
+        utimbuftype = 'struct __utimbuf32'
     end
 
 	-- getcwd in POSIX is in unistd.h
@@ -131,7 +120,7 @@ if OS == "Windows" then
 	-- _fileno, fseek, ftell
 	require 'ffi.c.stdio'
 
-	ffi.cdef(utime_def .. [[
+	ffi.cdef([[
         typedef wchar_t* LPTSTR;
         typedef unsigned char BOOLEAN;
         typedef unsigned long DWORD;
@@ -305,7 +294,7 @@ if OS == "Windows" then
 
         if type(actime) == "number" then
             modtime = modtime or actime
-            buf = ffi.new("utimebuf")
+            buf = ffi.new("utimbuf")
             buf.actime  = actime
             buf.modtime = modtime
         end
@@ -511,13 +500,14 @@ else
 
 	ffi.cdef([[
         // Where?
-		struct utimebuf {
+		struct utimbuf {
             time_t actime;
             time_t modtime;
         };
         //Where?
-		int utime(const char *file, const struct utimebuf *times);
+		int utime(const char *file, const struct utimbuf *times);
     ]])
+	utimbuftype = 'struct utimbuf'
 
     function _M.chdir(path)
         if lib.chdir(path) == 0 then
@@ -560,7 +550,7 @@ else
 
         if type(actime) == "number" then
             modtime = modtime or actime
-            buf = ffi.new("struct utimebuf")
+            buf = ffi.new(utimbuftype)
             buf.actime  = actime
             buf.modtime = modtime
         end
