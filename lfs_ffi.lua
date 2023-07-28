@@ -41,18 +41,6 @@ local stdiolib = require 'ffi.c.stdio'
 local MAXPATH_UNC = 32760
 local HAVE_WFINDFIRST = true
 
--- Windows
--- sys/utime.h:
--- _utime64 / _utime32 is in sys/utime.h
--- _wutime is in sys/utime.h or wchar.h
--- struct __utimbuf32, _utime32
--- struct __utimbuf64, _utime64
---
--- Linux:
--- utime.h:
--- struct utimbuf, utime
-local utimelib = require 'ffi.c.sys.utime'
-
 -- misc
 -- Windows-only:
 local wchar_t, win_utf8_to_unicode
@@ -253,25 +241,6 @@ uint32_t FormatMessageA(
 			if lib._rmdir(path) == 0 then
 				return true
 			end
-		end
-		return nil, errnostr()
-	end
-
-	function _M.touch(path, actime, modtime)
-		local buf
-
-		if type(actime) == "number" then
-			modtime = modtime or actime
-			buf = ffi.new(utimelib.struct_utimbuf)
-			buf.actime  = actime
-			buf.modtime = modtime
-		end
-
-		local p = ffi.new("unsigned char[?]", #path + 1)
-		ffi.copy(p, path)
-
-		if utimelib.utime(p, buf) == 0 then
-			return true
 		end
 		return nil, errnostr()
 	end
@@ -497,25 +466,6 @@ else
 		return nil, errnostr()
 	end
 
-	function _M.touch(path, actime, modtime)
-		local buf
-
-		if type(actime) == "number" then
-			modtime = modtime or actime
-			buf = ffi.new(utimelib.struct_utimbuf)
-			buf.actime  = actime
-			buf.modtime = modtime
-		end
-
-		local p = ffi.new("unsigned char[?]", #path + 1)
-		ffi.copy(p, path)
-
-		if utimelib.utime(p, buf) == 0 then
-			return true
-		end
-		return nil, errnostr()
-	end
-
 	function _M.setmode()
 		return true, "binary"
 	end
@@ -653,6 +603,36 @@ else
 		end
 		return true
 	end
+end
+
+-- Windows
+-- sys/utime.h:
+-- _utime64 / _utime32 is in sys/utime.h
+-- _wutime is in sys/utime.h or wchar.h
+-- struct __utimbuf32, _utime32
+-- struct __utimbuf64, _utime64
+--
+-- Linux:
+-- utime.h:
+-- struct utimbuf, utime
+local utimelib = require 'ffi.c.sys.utime'
+function _M.touch(path, actime, modtime)
+	local buf
+
+	if type(actime) == "number" then
+		modtime = modtime or actime
+		buf = ffi.new(utimelib.struct_utimbuf)
+		buf.actime  = actime
+		buf.modtime = modtime
+	end
+
+	local p = ffi.new("unsigned char[?]", #path + 1)
+	ffi.copy(p, path)
+
+	if utimelib.utime(p, buf) == 0 then
+		return true
+	end
+	return nil, errnostr()
 end
 
 -- lock related
