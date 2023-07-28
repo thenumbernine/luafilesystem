@@ -44,6 +44,9 @@ local HAVE_WFINDFIRST = true
 -- misc
 -- Windows-only:
 local wchar_t, win_utf8_to_unicode
+local rmdir_func	-- TODO do this within the require ffi.c.whatever.
+-- it's direct.h in windows and unistd.h in linux so ... use linux?
+local mkdir_func
 if ffi.os == "Windows" then
    	-- in Windows:
 	-- wchar.h -> corecrt_wio.h
@@ -80,6 +83,9 @@ if ffi.os == "Windows" then
 	-- Windows:
 	-- _getcwd, _wgetcwd, _chdir, _wchdir, _rmdir, _wrmdir, _mkdir, _wmkdir
 	require 'ffi.c.direct'
+	-- TODO put in aliases or something?  in direct.h or unistd.h.  probably unistd.h
+	rmdir_func = lib._rmdir
+	mkdir_func = lib._mkdir
 
 	ffi.cdef([[
 typedef wchar_t* LPTSTR;
@@ -209,40 +215,6 @@ uint32_t FormatMessageA(
 			size = size * 2
 		end
 		end
-	end
-
-	function _M.mkdir(path)
-		if _M.unicode then
-			local unc_str = win_utf8_to_unicode(path)
-			if lib._wmkdir(unc_str) == 0 then
-				return true
-			end
-		else
-			if type(path) ~= 'string' then
-				error('path should be a string')
-			end
-			if lib._mkdir(path) == 0 then
-				return true
-			end
-		end
-		return nil, errnostr()
-	end
-
-	function _M.rmdir(path)
-		if _M.unicode then
-			local unc_str = win_utf8_to_unicode(path)
-			if lib._wrmdir(unc_str) == 0 then
-				return true
-			end
-		else
-			if type(path) ~= 'string' then
-				error('path should be a string')
-			end
-			if lib._rmdir(path) == 0 then
-				return true
-			end
-		end
-		return nil, errnostr()
 	end
 
 	function _M.setmode(file, mode)
@@ -430,6 +402,8 @@ else
 	require 'ffi.c.unistd'
 	-- mkdir
 	require 'ffi.c.sys.stat'
+	rmdir_func = lib.rmdir
+	mkdir_func = lib.mkdir
 
 	function _M.chdir(path)
 		if lib.chdir(path) == 0 then
@@ -450,20 +424,6 @@ else
 			end
 			size = size * 2
 		end
-	end
-
-	function _M.mkdir(path, mode)
-		if lib.mkdir(path, mode or 509) == 0 then
-			return true
-		end
-		return nil, errnostr()
-	end
-
-	function _M.rmdir(path)
-		if lib.rmdir(path) == 0 then
-			return true
-		end
-		return nil, errnostr()
 	end
 
 	function _M.setmode()
@@ -635,6 +595,37 @@ function _M.touch(path, actime, modtime)
 	return nil, errnostr()
 end
 
+function _M.mkdir(path, mode)
+	if type(path) ~= 'string' then
+		error('path should be a string')
+	end
+	local res
+	if ffi.os == 'Windows' and _M.unicode then
+		res = lib._wmkdir(win_utf8_to_unicode(path))
+	elseif ffi.os == 'Window' then
+		res = mkdir_func(path)	-- TODO if this is a wrapper on windows then I can pass the mode in here.  no separate case.
+	else
+		res = mkdir_func(path, mode or 509)
+	end
+	if res == 0 then return true end
+	return nil, errnostr()
+end
+
+function _M.rmdir(path)
+	if type(path) ~= 'string' then
+		error('path should be a string')
+	end
+	local res
+	if ffi.os == 'Windows' and _M.unicode then
+		res = lib._wrmdir(win_utf8_to_unicode(path))
+	else
+		res = rmdir_func(path)
+	end
+	if res == 0 then return true end
+	return nil, errnostr()
+end
+
+
 -- lock related
 local dir_lock_struct
 local create_lockfile
@@ -728,8 +719,7 @@ if ffi.os == 'Windows' then
 	require 'ffi.c.sys.stat'
 	stat_func = function(filepath, buf)
 		if _M.unicode then
-			local szfp = win_utf8_to_unicode(filepath);
-			return lib._wstat64(szfp, buf)
+			return lib._wstat64(win_utf8_to_unicode(filepath), buf)
 		else
 			return lib._stat64(filepath, buf)
 		end
