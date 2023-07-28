@@ -1,15 +1,11 @@
 local bit = require "bit"
 local ffi = require "ffi"
 
-
-local band = bit.band
-local rshift = bit.rshift
 local lib = ffi.C
-local ffi_str = ffi.string
-local concat = table.concat
+
 local has_table_new, new_tab = pcall(require, "table.new")
 if not has_table_new or type(new_tab) ~= "function" then
-    new_tab = function () return {} end
+    new_tab = function() return {} end
 end
 
 
@@ -20,40 +16,45 @@ local _M = {
 -- common utils/constants
 local IS_64_BIT = ffi.abi('64bit')
 
--- on POSIX in sys/types.h
--- and I hacked it in on Windows as well
+-- on POSIX ssize_t is defined in sys/types.h
+-- and I hacked it in on Windows sys/types.h as well
 require 'ffi.c.sys.types'
 
 require 'ffi.c.string'	-- strerror
 local errnolib = require 'ffi.c.errno'
 
 local function errnostr()
-    return ffi_str(lib.strerror(ffi.errno()))
+    return ffi.string(lib.strerror(ffi.errno()))
 end
 
 -- Windows and Linux:
 -- FILENAME_MAX, SEEK_SET, SEEK_END
+-- Windows:
+-- _fileno, fseek, ftell
+-- ... and fileno alias
+-- Linux:
+-- fileno
 local stdiolib = require 'ffi.c.stdio'
 
-local OS = ffi.os
 -- sys/syslimits.h
 local MAXPATH_UNC = 32760
 local HAVE_WFINDFIRST = true
-local iolib
-local wiolib
-local wchar_t
-local win_utf8_to_unicode
-local win_unicode_to_utf8
-if OS == 'Windows' then
+
+-- misc
+-- both:
+local utimbuftype
+-- Windows-only:
+local wchar_t, win_utf8_to_unicode
+if ffi.os == "Windows" then
    	-- in Windows:
 	-- wchar.h -> corecrt_wio.h
 	-- mbrtowc, _wfindfirst, _wfindnext, _wfinddata_t, _wfinddata_i64_t
-	wiolib = require 'ffi.c.wchar'
+	local wiolib = require 'ffi.c.wchar'
 
 	-- corecrt_io.h
 	-- _findfirst, _findnext, _finddata_t, _finddata_i64_t
 	-- _setmode, _locking
-	iolib = require 'ffi.c.io'
+	local iolib = require 'ffi.c.io'
 
     function wchar_t(s)
         local mbstate = ffi.new('mbstate_t[1]')
@@ -71,12 +72,8 @@ if OS == 'Windows' then
         end
         return wcs
     end
-end
 
--- misc
-local utimbuftype
-if OS == "Windows" then
-    -- Windows
+	-- Windows
 	-- struct __utimbuf64, _utime64
 	-- struct __utimbuf32, _utime32
 	require 'ffi.c.sys.utime'
@@ -100,58 +97,49 @@ if OS == "Windows" then
 	-- _getcwd, _wgetcwd, _chdir, _wchdir, _rmdir, _wrmdir, _mkdir, _wmkdir
 	require 'ffi.c.direct'
 
-	-- Windows:
-	-- _fileno, fseek, ftell
-	require 'ffi.c.stdio'
-
 	ffi.cdef([[
-        typedef wchar_t* LPTSTR;
-        typedef unsigned char BOOLEAN;
-        typedef unsigned long DWORD;
-        BOOLEAN CreateSymbolicLinkW(
-            LPTSTR lpSymlinkFileName,
-            LPTSTR lpTargetFileName,
-            DWORD dwFlags
-        );
-    ]])
+typedef wchar_t* LPTSTR;
+typedef unsigned char BOOLEAN;
+typedef unsigned long DWORD;
+BOOLEAN CreateSymbolicLinkW(
+	LPTSTR lpSymlinkFileName,
+	LPTSTR lpTargetFileName,
+	DWORD dwFlags
+);
 
-    ffi.cdef([[
-   	// where?
-    int WideCharToMultiByte(
-        unsigned int     CodePage,
-        DWORD    dwFlags,
-        const wchar_t*  lpWideCharStr,
-        int      cchWideChar,
-        char*    lpMultiByteStr,
-        int      cbMultiByte,
-        const char*   lpDefaultChar,
-        int*   lpUsedDefaultChar);
+// where?
+int WideCharToMultiByte(
+	unsigned int     CodePage,
+	DWORD    dwFlags,
+	const wchar_t*  lpWideCharStr,
+	int      cchWideChar,
+	char*    lpMultiByteStr,
+	int      cbMultiByte,
+	const char*   lpDefaultChar,
+	int*   lpUsedDefaultChar);
 
-   	// where?
-    int MultiByteToWideChar(
-        unsigned int     CodePage,
-        DWORD    dwFlags,
-        const char*   lpMultiByteStr,
-        int      cbMultiByte,
-        wchar_t*   lpWideCharStr,
-        int      cchWideChar);
+// where?
+int MultiByteToWideChar(
+	unsigned int     CodePage,
+	DWORD    dwFlags,
+	const char*   lpMultiByteStr,
+	int      cbMultiByte,
+	wchar_t*   lpWideCharStr,
+	int      cchWideChar);
 
-    ]])
-    ffi.cdef[[
+// where?
+uint32_t GetLastError();
 
-		// where?
-        uint32_t GetLastError();
-
-		// where?
-		uint32_t FormatMessageA(
-            uint32_t dwFlags,
-            const void* lpSource,
-            uint32_t dwMessageId,
-            uint32_t dwLanguageId,
-            char* lpBuffer,
-            uint32_t nSize,
-            va_list *Arguments
-        );
+// where?
+uint32_t FormatMessageA(
+	uint32_t dwFlags,
+	const void* lpSource,
+	uint32_t dwMessageId,
+	uint32_t dwLanguageId,
+	char* lpBuffer,
+	uint32_t nSize,
+	va_list *Arguments
+);
     ]]
     -- Some helper functions
     local function error_win(lvl)
@@ -180,7 +168,7 @@ if OS == "Windows" then
         return szUnicode, nLenWchar
     end
     _M.win_utf8_to_unicode = win_utf8_to_unicode
-    function win_unicode_to_utf8( szUnicode)
+    local function win_unicode_to_utf8( szUnicode)
         local dwFlags = _M.unicode_errors and WC_ERR_INVALID_CHARS or 0
         local nLen = lib.WideCharToMultiByte(CP_UTF8, dwFlags, szUnicode, -1, nil, 0, nil, nil);
         if nLen ==0 then error_win(2) end
@@ -199,7 +187,7 @@ if OS == "Windows" then
         local str = ffi.new("char[?]",nLen)
         nLen = lib.WideCharToMultiByte(CP_ACP, dwFlags, szUnicode, -1, str, nLen, nil, nil);
         if nLen ==0 then error_win(2) end
-        return ffi_str(str)
+        return ffi.string(str)
     end
     function _M.chdir(path)
         if _M.unicode then
@@ -221,7 +209,7 @@ if OS == "Windows" then
             local buf = ffi.new("wchar_t[?]",MAXPATH_UNC)
             if lib._wgetcwd(buf, MAXPATH_UNC) ~= nil then
                 local buf_utf = win_unicode_to_utf8(buf)
-                return ffi_str(buf_utf)
+                return ffi.string(buf_utf)
             end
             error("error in currentdir")
         else
@@ -229,7 +217,7 @@ if OS == "Windows" then
         while true do
             local buf = ffi.new("char[?]", size)
             if lib._getcwd(buf, size) ~= nil then
-                return ffi_str(buf)
+                return ffi.string(buf)
             end
             if ffi.errno() ~= errnolib.ERANGE then
                 return nil, errnostr()
@@ -300,7 +288,7 @@ if OS == "Windows" then
             error('setmode: invalid mode')
         end
         mode = (mode == 'text') and 0x4000 or 0x8000
-        local prev_mode = iolib._setmode(lib._fileno(file), mode)
+        local prev_mode = iolib._setmode(stdiolib.fileno(file), mode)
         if prev_mode == -1 then
             return nil, errnostr()
         end
@@ -347,11 +335,11 @@ if OS == "Windows" then
                 dir.closed = true
                 return nil, errnostr()
             end
-            return ffi_str(entry.name)
+            return ffi.string(entry.name)
         end
 
         if iolib._findnext(dir._dentry.handle, entry) == 0 then
-            return ffi_str(entry.name)
+            return ffi.string(entry.name)
         end
         close(dir)
         return nil
@@ -369,12 +357,12 @@ if OS == "Windows" then
                 return nil, errnostr()
             end
             local szName = win_unicode_to_utf8(entry.name)--, -1, szName, 512);
-            return ffi_str(szName)
+            return ffi.string(szName)
         end
 
         if wiolib._wfindnext(dir._dentry.handle, entry) == 0 then
             local szName = win_unicode_to_utf8(entry.name)--, -1, szName, 512);
-            return ffi_str(szName)
+            return ffi.string(szName)
         end
         close(dir)
         return nil
@@ -440,7 +428,7 @@ if OS == "Windows" then
         if lib.fseek(fh, start, stdiolib.SEEK_SET) ~= 0 then
             return nil, errnostr()
         end
-        local fd = lib._fileno(fh)
+        local fd = stdiolib.fileno(fh)
         if lib._locking(fd, lkmode, len) == -1 then
             return nil, errnostr()
         end
@@ -496,7 +484,7 @@ else
         while true do
             local buf = ffi.new("char[?]", size)
             if lib.getcwd(buf, size) ~= nil then
-                return ffi_str(buf)
+                return ffi.string(buf)
             end
             if ffi.errno() ~= errnolib.ERANGE then
                 return nil, errnostr()
@@ -567,7 +555,7 @@ else
 
         local entry = lib.readdir(dir._dentry)
         if entry ~= nil then
-            return ffi_str(entry.d_name)
+            return ffi.string(entry.d_name)
         else
             close(dir)
             return nil
@@ -597,10 +585,10 @@ else
         return iterator, dir_obj
     end
 
-    local F_SETLK = (OS == 'Linux') and 6 or 8
+    local F_SETLK = (ffi.os == 'Linux') and 6 or 8
     local mode_ltype_map
     local flock_def
-    if OS == 'Linux' then
+    if ffi.os == 'Linux' then
         flock_def = [[
             struct flock {
                 short int l_type;
@@ -632,10 +620,6 @@ else
         }
     end
 
-	-- Linux:
-	-- fileno
-	require 'ffi.c.stdio'
-
 	ffi.cdef(flock_def..[[
         // Where?
 		int fcntl(int fd, int cmd, ... /* arg */ );
@@ -660,7 +644,7 @@ else
         if io.type(filehandle) ~= 'file' then
             error("lock: invalid file")
         end
-        local fd = lib.fileno(filehandle)
+        local fd = stdiolib.fileno(filehandle)
         local ok, err = lock(fd, mode, start, length)
         if not ok then
             return nil, err
@@ -672,7 +656,7 @@ else
         if io.type(filehandle) ~= 'file' then
             error("unlock: invalid file")
         end
-        local fd = lib.fileno(filehandle)
+        local fd = stdiolib.fileno(filehandle)
         local ok, err = lock(fd, 'u', start, length)
         if not ok then
             return nil, err
@@ -686,7 +670,7 @@ local dir_lock_struct
 local create_lockfile
 local delete_lockfile
 
-if OS == 'Windows' then
+if ffi.os == 'Windows' then
     ffi.cdef([[
         typedef const wchar_t* LPCWSTR;
         typedef struct _SECURITY_ATTRIBUTES {
@@ -768,7 +752,7 @@ end
 -- stat related
 local stattype
 local stat_func, lstat_func
-if OS == 'Windows' then
+if ffi.os == 'Windows' then
     -- Windows
 	-- struct stat, _stat64, _wstat64
 	require 'ffi.c.sys.stat'
@@ -814,23 +798,23 @@ local ftype_name_map = {
 }
 
 local function mode_to_ftype(mode)
-    local ftype = band(mode, STAT.FMT)
+    local ftype = bit.band(mode, STAT.FMT)
     return ftype_name_map[ftype] or 'other'
 end
 
 local function mode_to_perm(mode)
-    local perm_bits = band(mode, tonumber(777, 8))
+    local perm_bits = bit.band(mode, tonumber(777, 8))
     local perm = new_tab(9, 0)
     local i = 9
     while i > 0 do
-        local perm_bit = band(perm_bits, 7)
-        perm[i] = (band(perm_bit, 1) > 0 and 'x' or '-')
-        perm[i-1] = (band(perm_bit, 2) > 0 and 'w' or '-')
-        perm[i-2] = (band(perm_bit, 4) > 0 and 'r' or '-')
+        local perm_bit = bit.band(perm_bits, 7)
+        perm[i] = (bit.band(perm_bit, 1) > 0 and 'x' or '-')
+        perm[i-1] = (bit.band(perm_bit, 2) > 0 and 'w' or '-')
+        perm[i-2] = (bit.band(perm_bit, 4) > 0 and 'r' or '-')
         i = i - 3
-        perm_bits = rshift(perm_bits, 3)
+        perm_bits = bit.rshift(perm_bits, 3)
     end
-    return concat(perm)
+    return table.concat(perm)
 end
 
 local function time_or_timespec(time, timespec)
@@ -867,7 +851,7 @@ local stat_type = ffi.metatype(stattype, {
 
 -- Add target field for symlinkattributes, which is the absolute path of linked target
 local get_link_target_path
-if OS == 'Windows' then
+if ffi.os == 'Windows' then
     function get_link_target_path()
         return nil, "could not obtain link target: Function not implemented ", errnolib.ENOSYS
     end
@@ -884,7 +868,7 @@ else
             return nil, "not enought size for readlink: "..errnostr(), ffi.errno()
         end
         buf[size] = 0
-        return ffi_str(buf)
+        return ffi.string(buf)
     end
 end
 
