@@ -494,19 +494,12 @@ else
 	-- getcwd, chdir, rmdir, link, symlink, unlink, syscall, readlink
 	require 'ffi.c.unistd'
 	-- mkdir
-	rquire 'ffi.c.sys.stat'
+	require 'ffi.c.sys.stat'
 	-- time_t
 	require 'ffi.c.time'
-
-	ffi.cdef([[
-        // Where?
-		struct utimbuf {
-            time_t actime;
-            time_t modtime;
-        };
-        //Where?
-		int utime(const char *file, const struct utimbuf *times);
-    ]])
+	-- struct utimbuf, utime
+	require 'ffi.c.utime'
+	-- TODO it is tempting to have ffi.c.utime or ffi.c.sys.utime return both ffi.Linux.c.utime and ffi.Windows.c.sys.utime
 	utimbuftype = 'struct utimbuf'
 
     function _M.chdir(path)
