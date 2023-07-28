@@ -501,20 +501,22 @@ if OS == "Windows" then
         return true
     end
 else
-    ffi.cdef([[
-        char *getcwd(char *buf, size_t size);
-        int chdir(const char *path);
-        int rmdir(const char *pathname);
-        typedef unsigned int mode_t;
-        int mkdir(const char *pathname, mode_t mode);
-        typedef size_t time_t;
-        struct utimebuf {
+    -- Linux:
+	-- getcwd, chdir, rmdir, link, symlink, unlink, syscall
+	require 'ffi.c.unistd'
+	-- mkdir
+	rquire 'ffi.c.sys.stat'
+	-- time_t
+	require 'ffi.c.time'
+
+	ffi.cdef([[
+        // Where?
+		struct utimebuf {
             time_t actime;
             time_t modtime;
         };
-        int utime(const char *file, const struct utimebuf *times);
-        int link(const char *oldpath, const char *newpath);
-        int symlink(const char *oldpath, const char *newpath);
+        //Where?
+		int utime(const char *file, const struct utimebuf *times);
     ]])
 
     function _M.chdir(path)
@@ -584,35 +586,9 @@ else
         return nil, errno()
     end
 
-    local dirent_def
-    if OS == 'OSX' or OS == 'BSD' then
-        dirent_def = [[
-            /* _DARWIN_FEATURE_64_BIT_INODE is NOT defined here? */
-            struct dirent {
-                uint32_t d_ino;
-                uint16_t d_reclen;
-                uint8_t  d_type;
-                uint8_t  d_namlen;
-                char d_name[256];
-            };
-        ]]
-    else
-        dirent_def = [[
-            struct dirent {
-                int64_t           d_ino;
-                size_t           d_off;
-                unsigned short  d_reclen;
-                unsigned char   d_type;
-                char            d_name[256];
-            };
-        ]]
-    end
-    ffi.cdef(dirent_def .. [[
-        typedef struct  __dirstream DIR;
-        DIR *opendir(const char *name);
-        struct dirent *readdir(DIR *dirp);
-        int closedir(DIR *dirp);
-    ]])
+	-- Linux:
+	-- struct dirent, DIR, opendir, readdir, closedir
+	require 'ffi.c.dirent'
 
     local function close(dir)
         if dir._dentry ~= nil then
@@ -693,10 +669,13 @@ else
         }
     end
 
-    ffi.cdef(flock_def..[[
-        int fileno(struct FILE *stream);
-        int fcntl(int fd, int cmd, ... /* arg */ );
-        int unlink(const char *path);
+	-- Linux:
+	-- fileno
+	require 'ffi.c.stdio'
+
+	ffi.cdef(flock_def..[[
+        // Where?
+		int fcntl(int fd, int cmd, ... /* arg */ );
     ]])
 
     local function lock(fd, mode, start, len)
@@ -824,210 +803,11 @@ function _M.lock_dir(path, _)
 end
 
 -- stat related
-local stat_func
-local lstat_func
-if OS == 'Linux' then
-    require 'ffi.c.unistd'	-- syscall
-    local ARCH = ffi.arch
-    -- Taken from justincormack/ljsyscall
-    local stat_syscall_num
-    local lstat_syscall_num
-    if ARCH == 'x64' then
-        ffi.cdef([[
-            typedef struct {
-                unsigned long   st_dev;
-                unsigned long   st_ino;
-                unsigned long   st_nlink;
-                unsigned int    st_mode;
-                unsigned int    st_uid;
-                unsigned int    st_gid;
-                unsigned int    __pad0;
-                unsigned long   st_rdev;
-                long            st_size;
-                long            st_blksize;
-                long            st_blocks;
-                unsigned long   st_atime;
-                unsigned long   st_atime_nsec;
-                unsigned long   st_mtime;
-                unsigned long   st_mtime_nsec;
-                unsigned long   st_ctime;
-                unsigned long   st_ctime_nsec;
-                long            __unused[3];
-            } lfs_stat;
-        ]])
-        stat_syscall_num = 4
-        lstat_syscall_num = 6
-    elseif ARCH == 'x86' then
-        ffi.cdef([[
-            typedef struct {
-                unsigned long long      st_dev;
-                unsigned char   __pad0[4];
-                unsigned long   __st_ino;
-                unsigned int    st_mode;
-                unsigned int    st_nlink;
-                unsigned long   st_uid;
-                unsigned long   st_gid;
-                unsigned long long      st_rdev;
-                unsigned char   __pad3[4];
-                long long       st_size;
-                unsigned long   st_blksize;
-                unsigned long long      st_blocks;
-                unsigned long   st_atime;
-                unsigned long   st_atime_nsec;
-                unsigned long   st_mtime;
-                unsigned int    st_mtime_nsec;
-                unsigned long   st_ctime;
-                unsigned long   st_ctime_nsec;
-                unsigned long long      st_ino;
-            } lfs_stat;
-        ]])
-        stat_syscall_num = IS_64_BIT and 106 or 195
-        lstat_syscall_num = IS_64_BIT and 107 or 196
-    elseif ARCH == 'arm' then
-        if IS_64_BIT then
-            ffi.cdef([[
-                typedef struct {
-                    unsigned long   st_dev;
-                    unsigned long   st_ino;
-                    unsigned int    st_mode;
-                    unsigned int    st_nlink;
-                    unsigned int    st_uid;
-                    unsigned int    st_gid;
-                    unsigned long   st_rdev;
-                    unsigned long   __pad1;
-                    long            st_size;
-                    int             st_blksize;
-                    int             __pad2;
-                    long            st_blocks;
-                    long            st_atime;
-                    unsigned long   st_atime_nsec;
-                    long            st_mtime;
-                    unsigned long   st_mtime_nsec;
-                    long            st_ctime;
-                    unsigned long   st_ctime_nsec;
-                    unsigned int    __unused4;
-                    unsigned int    __unused5;
-                } lfs_stat;
-            ]])
-            stat_syscall_num = 106
-            lstat_syscall_num = 107
-        else
-            ffi.cdef([[
-                typedef struct {
-                    unsigned long long      st_dev;
-                    unsigned char   __pad0[4];
-                    unsigned long   __st_ino;
-                    unsigned int    st_mode;
-                    unsigned int    st_nlink;
-                    unsigned long   st_uid;
-                    unsigned long   st_gid;
-                    unsigned long long      st_rdev;
-                    unsigned char   __pad3[4];
-                    long long       st_size;
-                    unsigned long   st_blksize;
-                    unsigned long long      st_blocks;
-                    unsigned long   st_atime;
-                    unsigned long   st_atime_nsec;
-                    unsigned long   st_mtime;
-                    unsigned int    st_mtime_nsec;
-                    unsigned long   st_ctime;
-                    unsigned long   st_ctime_nsec;
-                    unsigned long long      st_ino;
-                } lfs_stat;
-            ]])
-            stat_syscall_num = 195
-            lstat_syscall_num = 196
-        end
-    elseif ARCH == 'ppc' or ARCH == 'ppcspe' then
-        ffi.cdef([[
-            typedef struct {
-                unsigned long long st_dev;
-                unsigned long long st_ino;
-                unsigned int    st_mode;
-                unsigned int    st_nlink;
-                unsigned int    st_uid;
-                unsigned int    st_gid;
-                unsigned long long st_rdev;
-                unsigned long long __pad1;
-                long long       st_size;
-                int             st_blksize;
-                int             __pad2;
-                long long       st_blocks;
-                int             st_atime;
-                unsigned int    st_atime_nsec;
-                int             st_mtime;
-                unsigned int    st_mtime_nsec;
-                int             st_ctime;
-                unsigned int    st_ctime_nsec;
-                unsigned int    __unused4;
-                unsigned int    __unused5;
-            } lfs_stat;
-        ]])
-        stat_syscall_num = IS_64_BIT and 106 or 195
-        lstat_syscall_num = IS_64_BIT and 107 or 196
-    elseif ARCH == 'mips' or ARCH == 'mipsel' then
-        ffi.cdef([[
-            typedef struct {
-                unsigned long   st_dev;
-                unsigned long   __st_pad0[3];
-                unsigned long long      st_ino;
-                mode_t          st_mode;
-                nlink_t         st_nlink;
-                uid_t           st_uid;
-                gid_t           st_gid;
-                unsigned long   st_rdev;
-                unsigned long   __st_pad1[3];
-                long long       st_size;
-                time_t          st_atime;
-                unsigned long   st_atime_nsec;
-                time_t          st_mtime;
-                unsigned long   st_mtime_nsec;
-                time_t          st_ctime;
-                unsigned long   st_ctime_nsec;
-                unsigned long   st_blksize;
-                unsigned long   __st_pad2;
-                long long       st_blocks;
-                long __st_padding4[14];
-            } lfs_stat;
-        ]])
-        stat_syscall_num = IS_64_BIT and 4106 or 4213
-        lstat_syscall_num = IS_64_BIT and 4107 or 4214
-    end
-
-    if stat_syscall_num then
-        stat_func = function(filepath, buf)
-            return lib.syscall(stat_syscall_num, filepath, buf)
-        end
-        lstat_func = function(filepath, buf)
-            return lib.syscall(lstat_syscall_num, filepath, buf)
-        end
-    else
-        ffi.cdef('typedef struct {} lfs_stat;')
-        stat_func = function() error("TODO support other Linux architectures") end
-        lstat_func = stat_func
-    end
-elseif OS == 'Windows' then
-    -- sys/stat.h
-	ffi.cdef([[
-        typedef __int64 __time64_t;
-        typedef struct {
-            unsigned int        st_dev;
-            unsigned short      st_ino;
-            unsigned short      st_mode;
-            short               st_nlink;
-            short               st_uid;
-            short               st_gid;
-            unsigned int        st_rdev;
-            __int64             st_size;
-            __time64_t          st_atime;
-            __time64_t          st_mtime;
-            __time64_t          st_ctime;
-        } lfs_stat;
-
-        int _stat64(const char *path, lfs_stat *buffer);
-        int _wstat64(const wchar_t *path, lfs_stat *buffer);
-    ]])
-
+local stat_func, lstat_func
+if OS == 'Windows' then
+    -- Windows
+	-- struct stat, _stat64, _wstat64
+	require 'ffi.c.sys.stat'
     stat_func = function(filepath, buf)
         if _M.unicode then
             local szfp = win_utf8_to_unicode(filepath);
@@ -1037,71 +817,12 @@ elseif OS == 'Windows' then
         end
     end
     lstat_func = stat_func
-elseif OS == 'OSX' then
-    ffi.cdef([[
-        struct lfs_timespec {
-            time_t tv_sec;
-            long tv_nsec;
-        };
-        typedef struct {
-            uint32_t           st_dev;
-            uint16_t          st_mode;
-            uint16_t         st_nlink;
-            uint64_t         st_ino;
-            uint32_t           st_uid;
-            uint32_t           st_gid;
-            uint32_t           st_rdev;
-            struct lfs_timespec st_atimespec;
-            struct lfs_timespec st_mtimespec;
-            struct lfs_timespec st_ctimespec;
-            struct lfs_timespec st_birthtimespec;
-            int64_t           st_size;
-            int64_t        st_blocks;
-            int32_t       st_blksize;
-            uint32_t        st_flags;
-            uint32_t        st_gen;
-            int32_t         st_lspare;
-            int64_t         st_qspare[2];
-        } lfs_stat;
-        int stat64(const char *path, lfs_stat *buf);
-        int lstat64(const char *path, lfs_stat *buf);
-    ]])
-    stat_func = lib.stat64
-    lstat_func = lib.lstat64
-elseif OS == 'BSD' then
-    ffi.cdef([[
-        struct lfs_timespec {
-            time_t tv_sec;
-            long tv_nsec;
-        };
-        typedef struct {
-            uint32_t           st_dev;
-            uint32_t         st_ino;
-            uint16_t          st_mode;
-            uint16_t         st_nlink;
-            uint32_t           st_uid;
-            uint32_t           st_gid;
-            uint32_t           st_rdev;
-            struct lfs_timespec st_atimespec;
-            struct lfs_timespec st_mtimespec;
-            struct lfs_timespec st_ctimespec;
-            int64_t           st_size;
-            int64_t        st_blocks;
-            int32_t       st_blksize;
-            uint32_t        st_flags;
-            uint32_t        st_gen;
-            int32_t         st_lspare;
-            struct lfs_timespec st_birthtimespec;
-        } lfs_stat;
-        int stat(const char *path, lfs_stat *buf);
-        int lstat(const char *path, lfs_stat *buf);
-    ]])
-    stat_func = lib.stat
-    lstat_func = lib.lstat
-else
-    ffi.cdef('typedef struct {} lfs_stat;')
-    stat_func = function() error('TODO: support other posix system') end
-    lstat_func = stat_func
+else	-- Linux, OSX, BSD, etc
+	-- Linux:
+	-- struct stat, stat, lstat
+	require 'ffi.c.sys.stat'
+	stat_func = lib.stat
+	lstat_func = lib.lstat
 end
 
 local STAT = {
@@ -1175,7 +896,8 @@ local mt = {
         return func and func(self)
     end
 }
-local stat_type = ffi.metatype('lfs_stat', mt)
+-- TODO move this into ffi.c.sys.stat (per respective OS)
+local stat_type = ffi.metatype('struct stat', mt)
 
 -- Add target field for symlinkattributes, which is the absolute path of linked target
 local get_link_target_path
