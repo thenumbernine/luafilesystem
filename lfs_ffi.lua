@@ -37,6 +37,22 @@ end
 -- fileno
 local stdiolib = require 'ffi.c.stdio'
 
+-- Windows:
+-- _getcwd, _wgetcwd, _chdir, _wchdir, _rmdir, _wrmdir, _mkdir, _wmkdir
+--require 'ffi.c.direct'
+-- hmm, how come I see the non-_ names here too?  do I not need a lua alias?
+-- Linux:
+-- getcwd, chdir, rmdir, link, symlink, unlink, syscall, readlink
+-- the ffi.c.uinstd file on Windows will instead return ffi.Windows.c.direct
+local unistdlib = require 'ffi.c.unistd'
+
+-- Windows
+-- struct stat, _stat64, _wstat64
+-- includes a require ffi.Windows.c.direct, which defines mkdir() (not just _mkdir?)
+-- Linux:
+-- struct stat, stat, lstat, mkdir
+local statlib = require 'ffi.c.sys.stat'
+
 -- sys/syslimits.h
 local MAXPATH_UNC = 32760
 local HAVE_WFINDFIRST = true
@@ -44,9 +60,6 @@ local HAVE_WFINDFIRST = true
 -- misc
 -- Windows-only:
 local wchar_t, win_utf8_to_unicode
-local rmdir_func	-- TODO do this within the require ffi.c.whatever.
--- it's direct.h in windows and unistd.h in linux so ... use linux?
-local mkdir_func
 if ffi.os == "Windows" then
    	-- in Windows:
 	-- wchar.h -> corecrt_wio.h
@@ -75,19 +88,7 @@ if ffi.os == "Windows" then
 		return wcs
 	end
 
-	-- getcwd in POSIX is in unistd.h
-	-- _getcwd in Windows is in direct.h
-	-- for compat's sake I have a lua binding in ffi.c.unistd to _getcwd
-	-- _wgetcwd in Windows is in direct.h or wchar.h
-
-	-- Windows:
-	-- _getcwd, _wgetcwd, _chdir, _wchdir, _rmdir, _wrmdir, _mkdir, _wmkdir
-	require 'ffi.c.direct'
-	-- TODO put in aliases or something?  in direct.h or unistd.h.  probably unistd.h
-	rmdir_func = lib._rmdir
-	mkdir_func = lib._mkdir
-
-	ffi.cdef([[
+	ffi.cdef[[
 typedef wchar_t* LPTSTR;
 typedef unsigned char BOOLEAN;
 typedef unsigned long DWORD;
@@ -130,7 +131,7 @@ uint32_t FormatMessageA(
 	uint32_t nSize,
 	va_list *Arguments
 );
-	]]
+]]
 	-- Some helper functions
 	local function error_win(lvl)
 		local errcode = ffi.C.GetLastError()
@@ -148,6 +149,7 @@ uint32_t FormatMessageA(
 	local CP_UTF8 = 65001
 	local WC_ERR_INVALID_CHARS = 0x00000080
 	local MB_ERR_INVALID_CHARS  = 0x00000008
+	-- TODO ... unicode_to_wchar ?
 	function win_utf8_to_unicode(szUtf8)
 		local dwFlags = _M.unicode_errors and MB_ERR_INVALID_CHARS or 0
 		local nLenWchar = lib.MultiByteToWideChar(CP_UTF8, dwFlags, szUtf8, -1, nil, 0 );
@@ -178,43 +180,6 @@ uint32_t FormatMessageA(
 		nLen = lib.WideCharToMultiByte(CP_ACP, dwFlags, szUnicode, -1, str, nLen, nil, nil);
 		if nLen ==0 then error_win(2) end
 		return ffi.string(str)
-	end
-	function _M.chdir(path)
-		if _M.unicode then
-			local uncstr = win_utf8_to_unicode(path)
-			if lib._wchdir(uncstr) == 0 then return true end
-		else
-			if type(path) ~= 'string' then
-				error('path should be a string')
-			end
-			if lib._chdir(path) == 0 then
-				return true
-			end
-		end
-		return nil, errnostr()
-	end
-
-	function _M.currentdir()
-		if _M.unicode then
-			local buf = ffi.new("wchar_t[?]",MAXPATH_UNC)
-			if lib._wgetcwd(buf, MAXPATH_UNC) ~= nil then
-				local buf_utf = win_unicode_to_utf8(buf)
-				return ffi.string(buf_utf)
-			end
-			error("error in currentdir")
-		else
-		local size = stdiolib.FILENAME_MAX
-		while true do
-			local buf = ffi.new("char[?]", size)
-			if lib._getcwd(buf, size) ~= nil then
-				return ffi.string(buf)
-			end
-			if ffi.errno() ~= errnolib.ERANGE then
-				return nil, errnostr()
-			end
-			size = size * 2
-		end
-		end
 	end
 
 	function _M.setmode(file, mode)
@@ -397,35 +362,6 @@ uint32_t FormatMessageA(
 		return true
 	end
 else
-	-- Linux:
-	-- getcwd, chdir, rmdir, link, symlink, unlink, syscall, readlink
-	require 'ffi.c.unistd'
-	-- mkdir
-	require 'ffi.c.sys.stat'
-	rmdir_func = lib.rmdir
-	mkdir_func = lib.mkdir
-
-	function _M.chdir(path)
-		if lib.chdir(path) == 0 then
-			return true
-		end
-		return nil, errnostr()
-	end
-
-	function _M.currentdir()
-		local size = stdiolib.FILENAME_MAX
-		while true do
-			local buf = ffi.new("char[?]", size)
-			if lib.getcwd(buf, size) ~= nil then
-				return ffi.string(buf)
-			end
-			if ffi.errno() ~= errnolib.ERANGE then
-				return nil, errnostr()
-			end
-			size = size * 2
-		end
-	end
-
 	function _M.setmode()
 		return true, "binary"
 	end
@@ -595,31 +531,61 @@ function _M.touch(path, actime, modtime)
 	return nil, errnostr()
 end
 
-function _M.mkdir(path, mode)
-	if type(path) ~= 'string' then
-		error('path should be a string')
+function _M.currentdir()
+	if ffi.os == 'Windows' and _M.unicode then
+		local buf = ffi.new("wchar_t[?]",MAXPATH_UNC)
+		if lib._wgetcwd(buf, MAXPATH_UNC) ~= nil then
+			return ffi.string(win_unicode_to_utf8(buf))
+		end
+		error("error in currentdir")
+	else
+		local size = stdiolib.FILENAME_MAX
+		while true do
+			local buf = ffi.new("char[?]", size)
+			if unistdlib.getcwd(buf, size) ~= nil then
+				return ffi.string(buf)
+			end
+			if ffi.errno() ~= errnolib.ERANGE then
+				return nil, errnostr()
+			end
+			size = size * 2
+		end
 	end
+end
+
+function _M.chdir(path)
+	assert(type(path) == 'string', 'expected string')
+	local res
+	if ffi.os == 'Windows' and _M.unicode then
+		res = lib._wchdir(win_utf8_to_unicode(path))
+	else
+		res = unistdlib.chdir(path)
+	end
+	if res == 0 then return true end
+	return nil, errnostr()
+end
+
+function _M.mkdir(path, mode)
+	assert(type(path) == 'string', 'expected string')
 	local res
 	if ffi.os == 'Windows' and _M.unicode then
 		res = lib._wmkdir(win_utf8_to_unicode(path))
 	elseif ffi.os == 'Window' then
-		res = mkdir_func(path)	-- TODO if this is a wrapper on windows then I can pass the mode in here.  no separate case.
+		res = lib.mkdir(path)	-- TODO if this is a wrapper on windows then I can pass the mode in here.  no separate case.
 	else
-		res = mkdir_func(path, mode or 509)
+		res = lib.mkdir(path, mode or 509)
 	end
 	if res == 0 then return true end
 	return nil, errnostr()
 end
 
 function _M.rmdir(path)
-	if type(path) ~= 'string' then
-		error('path should be a string')
-	end
+	assert(type(path) == 'string', 'expected string')
 	local res
 	if ffi.os == 'Windows' and _M.unicode then
 		res = lib._wrmdir(win_utf8_to_unicode(path))
 	else
-		res = rmdir_func(path)
+		res = unistdlib.rmdir(path)
 	end
 	if res == 0 then return true end
 	return nil, errnostr()
@@ -714,9 +680,6 @@ end
 local stattype
 local stat_func, lstat_func
 if ffi.os == 'Windows' then
-	-- Windows
-	-- struct stat, _stat64, _wstat64
-	require 'ffi.c.sys.stat'
 	stat_func = function(filepath, buf)
 		if _M.unicode then
 			return lib._wstat64(win_utf8_to_unicode(filepath), buf)
@@ -728,9 +691,6 @@ if ffi.os == 'Windows' then
 	-- Windows, whhyyy do you have a fluly separate 'struct stat'?!?!?!
 	stattype = 'struct _stat64'
 else	-- Linux, OSX, BSD, etc
-	-- Linux:
-	-- struct stat, stat, lstat
-	require 'ffi.c.sys.stat'
 	stat_func = lib.stat
 	lstat_func = lib.lstat
 	stattype = 'struct stat'
