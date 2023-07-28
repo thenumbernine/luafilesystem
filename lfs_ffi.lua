@@ -31,8 +31,9 @@ local function errnostr()
     return ffi_str(lib.strerror(ffi.errno()))
 end
 
-require 'ffi.c.stdio'
-local MAXPATH = lib.FILENAME_MAX
+-- Windows and Linux:
+-- FILENAME_MAX, SEEK_SET, SEEK_END
+local stdiolib = require 'ffi.c.stdio'
 
 local OS = ffi.os
 -- sys/syslimits.h
@@ -224,7 +225,7 @@ if OS == "Windows" then
             end
             error("error in currentdir")
         else
-        local size = MAXPATH
+        local size = stdiolib.FILENAME_MAX
         while true do
             local buf = ffi.new("char[?]", size)
             if lib._getcwd(buf, size) ~= nil then
@@ -385,7 +386,7 @@ if OS == "Windows" then
     }}
 
     function _M.sdir(path)
-        if #path > MAXPATH - 2 then
+        if #path > stdiolib.FILENAME_MAX - 2 then
             error('path too long: ' .. path)
         end
         local dir_obj = setmetatable({
@@ -401,7 +402,7 @@ if OS == "Windows" then
     }}
 
     function _M.wdir(path)
-        if #path > MAXPATH - 2 then
+        if #path > stdiolib.FILENAME_MAX - 2 then
             error('path too long: ' .. path)
         end
         local dir_obj = setmetatable({
@@ -424,13 +425,11 @@ if OS == "Windows" then
         w = 2, -- LK_NBLCK
         u = 0, -- LK_UNLCK
     }
-    local SEEK_SET = 0
-    local SEEK_END = 2
 
     local function lock(fh, mode, start, len)
         local lkmode = mode_ltype_map[mode]
         if not len or len <= 0 then
-            if lib.fseek(fh, 0, SEEK_END) ~= 0 then
+            if lib.fseek(fh, 0, stdiolib.SEEK_END) ~= 0 then
                 return nil, errnostr()
             end
             len = lib.ftell(fh)
@@ -438,7 +437,7 @@ if OS == "Windows" then
         if not start or start <= 0 then
             start = 0
         end
-        if lib.fseek(fh, start, SEEK_SET) ~= 0 then
+        if lib.fseek(fh, start, stdiolib.SEEK_SET) ~= 0 then
             return nil, errnostr()
         end
         local fd = lib._fileno(fh)
@@ -493,7 +492,7 @@ else
     end
 
     function _M.currentdir()
-        local size = MAXPATH
+        local size = stdiolib.FILENAME_MAX
         while true do
             local buf = ffi.new("char[?]", size)
             if lib.getcwd(buf, size) ~= nil then
@@ -598,7 +597,6 @@ else
         return iterator, dir_obj
     end
 
-    local SEEK_SET = 0
     local F_SETLK = (OS == 'Linux') and 6 or 8
     local mode_ltype_map
     local flock_def
@@ -646,7 +644,7 @@ else
     local function lock(fd, mode, start, len)
         local flock = ffi.new('struct flock')
         flock.l_type = mode_ltype_map[mode]
-        flock.l_whence = SEEK_SET
+        flock.l_whence = stdiolib.SEEK_SET
         flock.l_start = start or 0
         flock.l_len = len or 0
         if lib.fcntl(fd, F_SETLK, flock) == -1 then
@@ -876,7 +874,7 @@ if OS == 'Windows' then
 else
     function get_link_target_path(link_path, statbuf)
         local size = statbuf.st_size
-        size = size == 0 and MAXPATH or size
+        size = size == 0 and stdiolib.FILENAME_MAX or size
         local buf = ffi.new('char[?]', size + 1)
         local read = lib.readlink(link_path, buf, size)
         if read == -1 then
