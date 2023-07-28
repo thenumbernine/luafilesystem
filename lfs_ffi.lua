@@ -22,8 +22,9 @@ local IS_64_BIT = ffi.abi('64bit')
 local ERANGE = 'Result too large'
 
 if not pcall(ffi.typeof, "ssize_t") then
-    -- LuaJIT 2.0 doesn't have ssize_t as a builtin type, let's define it
-    ffi.cdef("typedef intptr_t ssize_t")
+	-- LuaJIT 2.0 doesn't have ssize_t as a builtin type, let's define it
+    -- on POSIX in sys/types.h
+    require 'ffi.c.sys.types'
 end
 
 require 'ffi.c.string'	-- strerror
@@ -37,6 +38,7 @@ local OS = ffi.os
 local MAXPATH
 local MAXPATH_UNC = 32760
 local HAVE_WFINDFIRST = true
+local wcharlib
 local wchar_t
 local win_utf8_to_unicode
 local win_unicode_to_utf8
@@ -52,15 +54,8 @@ if OS == 'Windows' then
 	MAXPATH = 260
 
    	-- in Windows:
-	--  corecrt.h: defines mbstate_t
-	require 'ffi.c.stddef'	-- mbstate_t, _MBstatet
-
-	ffi.cdef[[
-        size_t mbrtowc(wchar_t* pwc,
-            const char* s,
-            size_t n,
-            mbstate_t* ps);
-    ]]
+	-- mbrtowc, _wfindfirst, _wfindnext, _wfinddata_t, _wfinddata_i64_t
+	wcharlib = require 'ffi.c.wchar'
 
     function wchar_t(s)
         local mbstate = ffi.new('mbstate_t[1]')
@@ -354,8 +349,6 @@ if OS == "Windows" then
 
     local findfirst
     local findnext
-    local wfindfirst
-    local wfindnext
     if IS_64_BIT then
         -- corecrt_io.h / corecrt_wio.h
 		ffi.cdef([[
@@ -370,22 +363,9 @@ if OS == "Windows" then
             intptr_t _findfirst64(const char *filespec, _finddata_t *fileinfo);
             int _findnext64(intptr_t handle, _finddata_t *fileinfo);
             int _findclose(intptr_t handle);
-            typedef struct _wfinddata_t { //is _wfinddata64_t
-                uint64_t  attrib;
-                uint64_t  time_create;
-                uint64_t  time_access;
-                uint64_t  time_write;
-                uint64_t  size;
-                wchar_t      name[]] .. MAXPATH ..[[];
-            } _wfinddata_t;
-            intptr_t _wfindfirst64(const wchar_t *filespec, struct _wfinddata_t *fileinfo);
-            int _wfindnext64(intptr_t handle,struct _wfinddata_t *fileinfo);
-
         ]])
         findfirst = lib._findfirst64
         findnext = lib._findnext64
-        wfindfirst = lib._wfindfirst64
-        wfindnext = lib._wfindnext64
     else
         ffi.cdef([[
             typedef struct _finddata32_t {
@@ -402,31 +382,6 @@ if OS == "Windows" then
             intptr_t _findfirst(const char* filespec, _finddata_t* fileinfo);
             int _findnext(intptr_t handle, _finddata_t *fileinfo);
 
-            typedef struct _wfinddata_t {
-                uint32_t  attrib;
-                uint32_t  time_create;
-                uint32_t  time_access;
-                uint32_t  time_write;
-                uint32_t  size;
-                wchar_t      name[]] .. MAXPATH ..[[];
-            } _wfinddata_t;
-            intptr_t _wfindfirst(
-            const wchar_t *filespec,
-            struct _wfinddata_t *fileinfo
-            );
-            intptr_t _wfindfirst32(
-                const wchar_t *filespec,
-                struct _wfinddata_t *fileinfo
-            );
-
-            int _wfindnext(
-                intptr_t handle,
-                struct _wfinddata_t *fileinfo
-            );
-            int _wfindnext32(
-                intptr_t handle,
-                struct _wfinddata_t *fileinfo
-            );
             int _findclose(intptr_t handle);
         ]])
         local ok
@@ -434,11 +389,7 @@ if OS == "Windows" then
         if not ok then findfirst = lib._findfirst end
         ok,findnext = pcall(function() return lib._findnext32 end)
         if not ok then findnext = lib._findnext end
-        ok,wfindfirst = pcall(function() return lib._wfindfirst end)
-        if not ok then ok,wfindfirst = pcall(function() return lib._wfindfirst32 end) end
         if not ok then HAVE_WFINDFIRST = false end
-        ok,wfindnext = pcall(function() return lib._wfindnext end)
-        if not ok then ok,wfindnext = pcall(function() return lib._wfindnext32 end) end
     end
 
     local function findclose(dentry)
@@ -483,7 +434,7 @@ if OS == "Windows" then
         if not dir._dentry then
             dir._dentry = ffi.new(dir_type)
             local szPattern = win_utf8_to_unicode(dir._pattern);
-            dir._dentry.handle = wfindfirst(szPattern, entry)
+            dir._dentry.handle = wcharlib._wfindfirst(szPattern, entry)
             if dir._dentry.handle == -1 then
                 dir.closed = true
                 return nil, errno()
@@ -492,7 +443,7 @@ if OS == "Windows" then
             return ffi_str(szName)
         end
 
-        if wfindnext(dir._dentry.handle, entry) == 0 then
+        if wcharlib._wfindnext(dir._dentry.handle, entry) == 0 then
             local szName = win_unicode_to_utf8(entry.name)--, -1, szName, 512);
             return ffi_str(szName)
         end
