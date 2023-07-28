@@ -38,7 +38,8 @@ local OS = ffi.os
 local MAXPATH
 local MAXPATH_UNC = 32760
 local HAVE_WFINDFIRST = true
-local wcharlib
+local iolib
+local wiolib
 local wchar_t
 local win_utf8_to_unicode
 local win_unicode_to_utf8
@@ -54,8 +55,14 @@ if OS == 'Windows' then
 	MAXPATH = 260
 
    	-- in Windows:
+	-- wchar.h -> corecrt_wio.h
 	-- mbrtowc, _wfindfirst, _wfindnext, _wfinddata_t, _wfinddata_i64_t
-	wcharlib = require 'ffi.c.wchar'
+	wiolib = require 'ffi.c.wchar'
+
+	-- corecrt_io.h
+	-- _findfirst, _findnext, _finddata_t, _finddata_i64_t
+	-- _setmode, _locking
+	iolib = require 'ffi.c.io'
 
     function wchar_t(s)
         local mbstate = ffi.new('mbstate_t[1]')
@@ -87,6 +94,7 @@ if OS == "Windows" then
     -- time_t is in corecrt.h
 	-- probably included from time.h or something
 	-- _utime64 / _utime32 is in sys/utime.h
+	-- _wutime is in sys/utime.h or wchar.h
 	if IS_64_BIT then
         utime_def = [[
             typedef __int64 time_t;
@@ -109,19 +117,20 @@ if OS == "Windows" then
         ]]
     end
 
-	-- Windows
-	-- some in direct.h
-    -- some in stdio.h
-	ffi.cdef([[
-        char *_getcwd(char *buf, size_t size);			//direct.h
-        wchar_t *_wgetcwd(wchar_t *buf, size_t size);
-        int _chdir(const char *path);
-        int _wchdir(const wchar_t *path);
-        int _rmdir(const char *pathname);
-        int _wrmdir(const wchar_t *pathname);
-        int _mkdir(const char *pathname);
-        int _wmkdir(const wchar_t *pathname);
-        ]] .. utime_def .. [[
+	-- getcwd in POSIX is in unistd.h
+	-- _getcwd in Windows is in direct.h
+    -- for compat's sake I have a lua binding in ffi.c.unistd to _getcwd
+	-- _wgetcwd in Windows is in direct.h or wchar.h
+
+	-- Windows:
+	-- _getcwd, _wgetcwd, _chdir, _wchdir, _rmdir, _wrmdir, _mkdir, _wmkdir
+	require 'ffi.c.direct'
+
+	-- Windows:
+	-- _fileno, fseek, ftell
+	require 'ffi.c.stdio'
+
+	ffi.cdef(utime_def .. [[
         typedef wchar_t* LPTSTR;
         typedef unsigned char BOOLEAN;
         typedef unsigned long DWORD;
@@ -130,17 +139,9 @@ if OS == "Windows" then
             LPTSTR lpTargetFileName,
             DWORD dwFlags
         );
-
-        int _fileno(struct FILE *stream);	//stdio.h
-        int _setmode(int fd, int mode);		//corecrt_io.h
     ]])
 
     ffi.cdef([[
-
-    size_t wcslen(const wchar_t *str);		//corecrt_wstring.h
-    wchar_t *wcsncpy(wchar_t *strDest, const wchar_t *strSource, size_t count);
-
-
    	// where?
     int WideCharToMultiByte(
         unsigned int     CodePage,
@@ -326,7 +327,7 @@ if OS == "Windows" then
             error('setmode: invalid mode')
         end
         mode = (mode == 'text') and 0x4000 or 0x8000
-        local prev_mode = lib._setmode(lib._fileno(file), mode)
+        local prev_mode = iolib._setmode(lib._fileno(file), mode)
         if prev_mode == -1 then
             return nil, errno()
         end
@@ -347,54 +348,9 @@ if OS == "Windows" then
         return nil, errno()
     end
 
-    local findfirst
-    local findnext
-    if IS_64_BIT then
-        -- corecrt_io.h / corecrt_wio.h
-		ffi.cdef([[
-            typedef struct _finddata64_t {
-                uint64_t  attrib;
-                uint64_t  time_create;
-                uint64_t  time_access;
-                uint64_t  time_write;
-                uint64_t  size;
-                char      name[]] .. MAXPATH ..[[];
-            } _finddata_t;
-            intptr_t _findfirst64(const char *filespec, _finddata_t *fileinfo);
-            int _findnext64(intptr_t handle, _finddata_t *fileinfo);
-            int _findclose(intptr_t handle);
-        ]])
-        findfirst = lib._findfirst64
-        findnext = lib._findnext64
-    else
-        ffi.cdef([[
-            typedef struct _finddata32_t {
-                uint32_t  attrib;
-                uint32_t  time_create;
-                uint32_t  time_access;
-                uint32_t  time_write;
-                uint32_t  size;
-                char      name[]] .. MAXPATH ..[[];
-            } _finddata_t;
-            intptr_t _findfirst32(const char* filespec, _finddata_t* fileinfo);
-            int _findnext32(intptr_t handle, _finddata_t *fileinfo);
-
-            intptr_t _findfirst(const char* filespec, _finddata_t* fileinfo);
-            int _findnext(intptr_t handle, _finddata_t *fileinfo);
-
-            int _findclose(intptr_t handle);
-        ]])
-        local ok
-        ok,findfirst = pcall(function() return lib._findfirst32 end)
-        if not ok then findfirst = lib._findfirst end
-        ok,findnext = pcall(function() return lib._findnext32 end)
-        if not ok then findnext = lib._findnext end
-        if not ok then HAVE_WFINDFIRST = false end
-    end
-
     local function findclose(dentry)
         if dentry and dentry.handle ~= -1 then
-            lib._findclose(dentry.handle)
+            iolib._findclose(dentry.handle)
             dentry.handle = -1
         end
     end
@@ -413,7 +369,7 @@ if OS == "Windows" then
         local entry = ffi.new("_finddata_t")
         if not dir._dentry then
             dir._dentry = ffi.new(dir_type)
-            dir._dentry.handle = findfirst(dir._pattern, entry)
+            dir._dentry.handle = iolib._findfirst(dir._pattern, entry)
             if dir._dentry.handle == -1 then
                 dir.closed = true
                 return nil, errno()
@@ -421,7 +377,7 @@ if OS == "Windows" then
             return ffi_str(entry.name)
         end
 
-        if findnext(dir._dentry.handle, entry) == 0 then
+        if iolib._findnext(dir._dentry.handle, entry) == 0 then
             return ffi_str(entry.name)
         end
         close(dir)
@@ -434,7 +390,7 @@ if OS == "Windows" then
         if not dir._dentry then
             dir._dentry = ffi.new(dir_type)
             local szPattern = win_utf8_to_unicode(dir._pattern);
-            dir._dentry.handle = wcharlib._wfindfirst(szPattern, entry)
+            dir._dentry.handle = wiolib._wfindfirst(szPattern, entry)
             if dir._dentry.handle == -1 then
                 dir.closed = true
                 return nil, errno()
@@ -443,7 +399,7 @@ if OS == "Windows" then
             return ffi_str(szName)
         end
 
-        if wcharlib._wfindnext(dir._dentry.handle, entry) == 0 then
+        if wiolib._wfindnext(dir._dentry.handle, entry) == 0 then
             local szName = win_unicode_to_utf8(entry.name)--, -1, szName, 512);
             return ffi_str(szName)
         end
@@ -490,16 +446,6 @@ if OS == "Windows" then
             return _M.sdir(path)
         end
     end
-
-    ffi.cdef([[
-		// stdio.h
-        int _fileno(struct FILE *stream);
-        int fseek(struct FILE *stream, long offset, int origin);
-        long ftell(struct FILE *stream);
-
-		// corecrt.h
-		int _locking(int fd, int mode, long nbytes);
-    ]])
 
     local mode_ltype_map = {
         r = 2, -- LK_NBLCK
