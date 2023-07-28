@@ -696,6 +696,10 @@ else	-- Linux, OSX, BSD, etc
 	stattype = 'struct stat'
 end
 
+-- Linux has these in sys/stat.h prefixed  __S_I
+-- Windows has these in sys/stat.h prefixed _S_I
+-- and Windows is missing FSOCK, FLNK, FBLK
+-- Maybe move this to ffi.c.sys.stat?
 local STAT = {
 	FMT   = 0xF000,
 	FSOCK = 0xC000,
