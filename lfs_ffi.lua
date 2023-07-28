@@ -34,9 +34,11 @@ local function errnostr()
     return ffi_str(lib.strerror(ffi.errno()))
 end
 
+require 'ffi.c.stdio'
+local MAXPATH = lib.FILENAME_MAX
+
 local OS = ffi.os
 -- sys/syslimits.h
-local MAXPATH
 local MAXPATH_UNC = 32760
 local HAVE_WFINDFIRST = true
 local iolib
@@ -45,16 +47,6 @@ local wchar_t
 local win_utf8_to_unicode
 local win_unicode_to_utf8
 if OS == 'Windows' then
-    -- in Windows this is in ...
-	-- stdio.h: #define L_tmpnam 260 // MAX_PATH
-	-- stdlib.h: #define _MAX_PATH 260
-	-- in Linux this is in ...
-	-- dirent.h: _POSIX_PATH_MAX = 256
-	-- limits.h: _POSIX_PATH_MAX = 256
-	-- linux/limits.h: PATH_MAX = 4096 (reached via #include <limits.h>)
-	-- stdio.h: FILENAME_MAX = 4096
-	MAXPATH = 260
-
    	-- in Windows:
 	-- wchar.h -> corecrt_wio.h
 	-- mbrtowc, _wfindfirst, _wfindnext, _wfinddata_t, _wfinddata_i64_t
@@ -81,12 +73,6 @@ if OS == 'Windows' then
         end
         return wcs
     end
-
-elseif OS == 'Linux' then
-    require 'ffi.c.limits'	-- #include <limits.h>
-	MAXPATH = ffi.C.PATH_MAX
-else
-    MAXPATH = 1024
 end
 
 -- misc
