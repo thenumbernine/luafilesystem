@@ -19,13 +19,10 @@ local _M = {
 
 -- common utils/constants
 local IS_64_BIT = ffi.abi('64bit')
-local ERANGE = 'Result too large'
 
-if not pcall(ffi.typeof, "ssize_t") then
-	-- LuaJIT 2.0 doesn't have ssize_t as a builtin type, let's define it
-    -- on POSIX in sys/types.h
-    require 'ffi.c.sys.types'
-end
+-- on POSIX in sys/types.h
+-- and I hacked it in on Windows as well
+require 'ffi.c.sys.types'
 
 require 'ffi.c.string'	-- strerror
 local errnolib = require 'ffi.c.errno'
@@ -502,9 +499,8 @@ else
             if lib.getcwd(buf, size) ~= nil then
                 return ffi_str(buf)
             end
-            local err = errnostr()
-            if err ~= ERANGE then
-                return nil, err
+            if ffi.errno() ~= errnolib.ERANGE then
+                return nil, errnostr()
             end
             size = size * 2
         end
