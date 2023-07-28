@@ -28,8 +28,9 @@ if not pcall(ffi.typeof, "ssize_t") then
 end
 
 require 'ffi.c.string'	-- strerror
+local errnolib = require 'ffi.c.errno'
 
-local function errno()
+local function errnostr()
     return ffi_str(lib.strerror(ffi.errno()))
 end
 
@@ -239,7 +240,7 @@ if OS == "Windows" then
                 return true
             end
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.currentdir()
@@ -257,9 +258,8 @@ if OS == "Windows" then
             if lib._getcwd(buf, size) ~= nil then
                 return ffi_str(buf)
             end
-            local err = errno()
-            if err ~= ERANGE then
-                return nil, err
+            if ffi.errno() ~= errnolib.ERANGE then
+                return nil, errnostr()
             end
             size = size * 2
         end
@@ -280,7 +280,7 @@ if OS == "Windows" then
                 return true
             end
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.rmdir(path)
@@ -297,7 +297,7 @@ if OS == "Windows" then
                 return true
             end
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.touch(path, actime, modtime)
@@ -316,7 +316,7 @@ if OS == "Windows" then
         if utime(p, buf) == 0 then
             return true
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.setmode(file, mode)
@@ -329,7 +329,7 @@ if OS == "Windows" then
         mode = (mode == 'text') and 0x4000 or 0x8000
         local prev_mode = iolib._setmode(lib._fileno(file), mode)
         if prev_mode == -1 then
-            return nil, errno()
+            return nil, errnostr()
         end
         return true, (prev_mode == 0x4000) and 'text' or 'binary'
     end
@@ -345,7 +345,7 @@ if OS == "Windows" then
                 wchar_t(old), is_dir) ~= 0 then
             return true
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     local function findclose(dentry)
@@ -372,7 +372,7 @@ if OS == "Windows" then
             dir._dentry.handle = iolib._findfirst(dir._pattern, entry)
             if dir._dentry.handle == -1 then
                 dir.closed = true
-                return nil, errno()
+                return nil, errnostr()
             end
             return ffi_str(entry.name)
         end
@@ -393,7 +393,7 @@ if OS == "Windows" then
             dir._dentry.handle = wiolib._wfindfirst(szPattern, entry)
             if dir._dentry.handle == -1 then
                 dir.closed = true
-                return nil, errno()
+                return nil, errnostr()
             end
             local szName = win_unicode_to_utf8(entry.name)--, -1, szName, 512);
             return ffi_str(szName)
@@ -459,7 +459,7 @@ if OS == "Windows" then
         local lkmode = mode_ltype_map[mode]
         if not len or len <= 0 then
             if lib.fseek(fh, 0, SEEK_END) ~= 0 then
-                return nil, errno()
+                return nil, errnostr()
             end
             len = lib.ftell(fh)
         end
@@ -467,11 +467,11 @@ if OS == "Windows" then
             start = 0
         end
         if lib.fseek(fh, start, SEEK_SET) ~= 0 then
-            return nil, errno()
+            return nil, errnostr()
         end
         local fd = lib._fileno(fh)
         if lib._locking(fd, lkmode, len) == -1 then
-            return nil, errno()
+            return nil, errnostr()
         end
         return true
     end
@@ -502,7 +502,7 @@ if OS == "Windows" then
     end
 else
     -- Linux:
-	-- getcwd, chdir, rmdir, link, symlink, unlink, syscall
+	-- getcwd, chdir, rmdir, link, symlink, unlink, syscall, readlink
 	require 'ffi.c.unistd'
 	-- mkdir
 	rquire 'ffi.c.sys.stat'
@@ -523,7 +523,7 @@ else
         if lib.chdir(path) == 0 then
             return true
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.currentdir()
@@ -533,7 +533,7 @@ else
             if lib.getcwd(buf, size) ~= nil then
                 return ffi_str(buf)
             end
-            local err = errno()
+            local err = errnostr()
             if err ~= ERANGE then
                 return nil, err
             end
@@ -545,14 +545,14 @@ else
         if lib.mkdir(path, mode or 509) == 0 then
             return true
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.rmdir(path)
         if lib.rmdir(path) == 0 then
             return true
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.touch(path, actime, modtime)
@@ -571,7 +571,7 @@ else
         if lib.utime(p, buf) == 0 then
             return true
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
     function _M.setmode()
@@ -583,7 +583,7 @@ else
         if f(old, new) == 0 then
             return true
         end
-        return nil, errno()
+        return nil, errnostr()
     end
 
 	-- Linux:
@@ -625,7 +625,7 @@ else
     function _M.dir(path)
         local dentry = lib.opendir(path)
         if dentry == nil then
-            error("cannot open "..path.." : "..errno())
+            error("cannot open "..path.." : "..errnostr())
         end
         local dir_obj = ffi.new(dir_obj_type)
         dir_obj._dentry = dentry
@@ -685,7 +685,7 @@ else
         flock.l_start = start or 0
         flock.l_len = len or 0
         if lib.fcntl(fd, F_SETLK, flock) == -1 then
-            return nil, errno()
+            return nil, errnostr()
         end
         return true
     end
@@ -797,18 +797,19 @@ function _M.lock_dir(path, _)
     local dir_lock = ffi.new(dir_lock_type)
     local lockname = path .. '/lockfile.lfs'
     if not dir_lock:create_lockfile(path, lockname) then
-        return nil, errno()
+        return nil, errnostr()
     end
     return dir_lock
 end
 
 -- stat related
+local stattype
 local stat_func, lstat_func
 if OS == 'Windows' then
     -- Windows
 	-- struct stat, _stat64, _wstat64
 	require 'ffi.c.sys.stat'
-    stat_func = function(filepath, buf)
+	stat_func = function(filepath, buf)
         if _M.unicode then
             local szfp = win_utf8_to_unicode(filepath);
             return lib._wstat64(szfp, buf)
@@ -817,12 +818,15 @@ if OS == 'Windows' then
         end
     end
     lstat_func = stat_func
+    -- Windows, whhyyy do you have a fluly separate 'struct stat'?!?!?! 
+	stattype = 'struct _stat64'
 else	-- Linux, OSX, BSD, etc
 	-- Linux:
 	-- struct stat, stat, lstat
 	require 'ffi.c.sys.stat'
 	stat_func = lib.stat
 	lstat_func = lib.lstat
+    stattype = 'struct stat'
 end
 
 local STAT = {
@@ -890,36 +894,31 @@ local attr_handlers = {
     size = function(st) return tonumber(st.st_size) end,
     uid = function(st) return tonumber(st.st_uid) end,
 }
-local mt = {
+-- TODO move this into ffi.c.sys.stat (per respective OS)
+local stat_type = ffi.metatype(stattype, {
     __index = function(self, attr_name)
         local func = attr_handlers[attr_name]
         return func and func(self)
     end
-}
--- TODO move this into ffi.c.sys.stat (per respective OS)
-local stat_type = ffi.metatype('struct stat', mt)
+})
 
 -- Add target field for symlinkattributes, which is the absolute path of linked target
 local get_link_target_path
 if OS == 'Windows' then
-    local ENOSYS = 40
     function get_link_target_path()
-        return nil, "could not obtain link target: Function not implemented ",ENOSYS
+        return nil, "could not obtain link target: Function not implemented ", errnolib.ENOSYS
     end
 else
-
-    ffi.cdef('ssize_t readlink(const char *path, char *buf, size_t bufsize);')
-    local EINVAL = 22
     function get_link_target_path(link_path, statbuf)
         local size = statbuf.st_size
         size = size == 0 and MAXPATH or size
         local buf = ffi.new('char[?]', size + 1)
         local read = lib.readlink(link_path, buf, size)
         if read == -1 then
-            return nil, "could not obtain link target: "..errno(), ffi.errno()
+            return nil, "could not obtain link target: "..errnostr(), ffi.errno()
         end
         if read > size then
-            return nil, "not enought size for readlink: "..errno(), ffi.errno()
+            return nil, "not enought size for readlink: "..errnostr(), ffi.errno()
         end
         buf[size] = 0
         return ffi_str(buf)
@@ -930,7 +929,7 @@ local buf = ffi.new(stat_type)
 local function attributes(filepath, attr, follow_symlink)
     local func = follow_symlink and stat_func or lstat_func
     if func(filepath, buf) == -1 then
-        return nil, string.format("cannot obtain information from file '%s' : %s",tostring(filepath),errno()), ffi.errno()
+        return nil, string.format("cannot obtain information from file '%s' : %s", tostring(filepath), errnostr()), ffi.errno()
     end
 
     local atype = type(attr)
