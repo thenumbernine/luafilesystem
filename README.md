@@ -17,6 +17,8 @@ http://keplerproject.github.io/luafilesystem/manual.html#reference
 
 What you only need is replacing `require 'lfs'` to `require 'lfs_ffi'`.
 
+This version will try to maintain LuaFileSystem compatability, but any alternative function implementations might break compatability with sonoro1234's implementation.
+
 ## Installation
 
 `[sudo] opm get spacewander/luafilesystem`

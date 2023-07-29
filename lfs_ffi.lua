@@ -59,7 +59,7 @@ local HAVE_WFINDFIRST = true
 
 -- misc
 -- Windows-only:
-local wchar_t, win_utf8_to_unicode
+local wchar_t, win_utf8_to_wchar, win_wchar_to_utf8
 if ffi.os == "Windows" then
    	-- in Windows:
 	-- wchar.h -> corecrt_wio.h
@@ -133,7 +133,9 @@ uint32_t FormatMessageA(
 );
 ]]
 	-- Some helper functions
-	local function error_win(lvl)
+	
+	-- returns the Windows error message for the specified error
+	local function errorMsgWin(lvl)
 		local errcode = ffi.C.GetLastError()
 		local str = ffi.new("char[?]",1024)
 		local FORMAT_MESSAGE_FROM_SYSTEM = 0x00001000;
@@ -149,36 +151,45 @@ uint32_t FormatMessageA(
 	local CP_UTF8 = 65001
 	local WC_ERR_INVALID_CHARS = 0x00000080
 	local MB_ERR_INVALID_CHARS  = 0x00000008
+	
 	-- TODO ... unicode_to_wchar ?
-	function win_utf8_to_unicode(szUtf8)
+	-- returns an array of wchar_t's & size in wchar_t's
+	-- upon failure returns nil and error message
+	function win_utf8_to_wchar(szUtf8)
 		local dwFlags = _M.unicode_errors and MB_ERR_INVALID_CHARS or 0
-		local nLenWchar = lib.MultiByteToWideChar(CP_UTF8, dwFlags, szUtf8, -1, nil, 0 );
-		if nLenWchar ==0 then error_win(2) end
-		local szUnicode = ffi.new("wchar_t[?]",nLenWchar)
-		nLenWchar = lib.MultiByteToWideChar(CP_UTF8, dwFlags, szUtf8, -1, szUnicode, nLenWchar);
-		if nLenWchar ==0 then error_win(2) end
+		local nLenWchar = lib.MultiByteToWideChar(CP_UTF8, dwFlags, szUtf8, -1, nil, 0)
+		if nLenWchar == 0 then return nil, errorMsgWin(2) end
+		local szUnicode = ffi.new("wchar_t[?]", nLenWchar)
+		nLenWchar = lib.MultiByteToWideChar(CP_UTF8, dwFlags, szUtf8, -1, szUnicode, nLenWchar)
+		if nLenWchar == 0 then return nil, errorMsgWin(2) end
 		return szUnicode, nLenWchar
 	end
-	_M.win_utf8_to_unicode = win_utf8_to_unicode
-	local function win_unicode_to_utf8( szUnicode)
+	_M.win_utf8_to_wchar = win_utf8_to_wchar
+	
+	-- returns a Lua string
+	-- upon failure returns nil and error message
+	function win_wchar_to_utf8(szUnicode)
 		local dwFlags = _M.unicode_errors and WC_ERR_INVALID_CHARS or 0
-		local nLen = lib.WideCharToMultiByte(CP_UTF8, dwFlags, szUnicode, -1, nil, 0, nil, nil);
-		if nLen ==0 then error_win(2) end
+		local nLen = lib.WideCharToMultiByte(CP_UTF8, dwFlags, szUnicode, -1, nil, 0, nil, nil)
+		if nLen == 0 then return nil, errorMsgWin(2) end
 		local str = ffi.new("char[?]",nLen)
-		nLen = lib.WideCharToMultiByte(CP_UTF8, dwFlags, szUnicode, -1, str, nLen, nil, nil);
-		if nLen ==0 then error_win(2) end
-		return str
+		nLen = lib.WideCharToMultiByte(CP_UTF8, dwFlags, szUnicode, -1, str, nLen, nil, nil)
+		if nLen == 0 then return nil, errorMsgWin(2) end
+		return ffi.string(str)
 	end
-	_M.win_unicode_to_utf8 = win_unicode_to_utf8
+	_M.win_wchar_to_utf8 = win_wchar_to_utf8
+	
 	local CP_ACP = 0
+	-- returns a Lua string
+	-- upon failure returns nil and error message
 	function _M.win_utf8_to_acp(utf)
-		local szUnicode = win_utf8_to_unicode(utf)
+		local szUnicode = assert(win_utf8_to_wchar(utf))
 		local dwFlags = _M.unicode_errors and WC_ERR_INVALID_CHARS or 0
-		local nLen = lib.WideCharToMultiByte(CP_ACP, dwFlags, szUnicode, -1, nil, 0, nil, nil);
-		if nLen ==0 then error_win(2) end
+		local nLen = lib.WideCharToMultiByte(CP_ACP, dwFlags, szUnicode, -1, nil, 0, nil, nil)
+		if nLen == 0 then return nil, errorMsgWin(2) end
 		local str = ffi.new("char[?]",nLen)
-		nLen = lib.WideCharToMultiByte(CP_ACP, dwFlags, szUnicode, -1, str, nLen, nil, nil);
-		if nLen ==0 then error_win(2) end
+		nLen = lib.WideCharToMultiByte(CP_ACP, dwFlags, szUnicode, -1, str, nLen, nil, nil)
+		if nLen == 0 then return nil, errorMsgWin(2) end
 		return ffi.string(str)
 	end
 
@@ -252,19 +263,16 @@ uint32_t FormatMessageA(
 		local entry = ffi.new("_wfinddata_t")
 		if not dir._dentry then
 			dir._dentry = ffi.new(dir_type)
-			local szPattern = win_utf8_to_unicode(dir._pattern);
-			dir._dentry.handle = wiolib._wfindfirst(szPattern, entry)
+			dir._dentry.handle = wiolib._wfindfirst(assert(win_utf8_to_wchar(dir._pattern)), entry)
 			if dir._dentry.handle == -1 then
 				dir.closed = true
 				return nil, errnostr()
 			end
-			local szName = win_unicode_to_utf8(entry.name)--, -1, szName, 512);
-			return ffi.string(szName)
+			return assert(win_wchar_to_utf8(entry.name))
 		end
 
 		if wiolib._wfindnext(dir._dentry.handle, entry) == 0 then
-			local szName = win_unicode_to_utf8(entry.name)--, -1, szName, 512);
-			return ffi.string(szName)
+			return assert(win_wchar_to_utf8(entry.name))
 		end
 		close(dir)
 		return nil
@@ -458,7 +466,7 @@ else
 
 	ffi.cdef(flock_def..[[
 		// Where?
-		int fcntl(int fd, int cmd, ... /* arg */ );
+		int fcntl(int fd, int cmd, ... /* arg */ )
 	]])
 
 	local function lock(fd, mode, start, len)
@@ -535,9 +543,9 @@ function _M.currentdir()
 	if ffi.os == 'Windows' and _M.unicode then
 		local buf = ffi.new("wchar_t[?]",MAXPATH_UNC)
 		if lib._wgetcwd(buf, MAXPATH_UNC) ~= nil then
-			return ffi.string(win_unicode_to_utf8(buf))
+			return win_wchar_to_utf8(buf)
 		end
-		error("error in currentdir")
+		return nil, "error in currentdir"
 	else
 		local size = stdiolib.FILENAME_MAX
 		while true do
@@ -557,7 +565,7 @@ function _M.chdir(path)
 	assert(type(path) == 'string', 'expected string')
 	local res
 	if ffi.os == 'Windows' and _M.unicode then
-		res = lib._wchdir(win_utf8_to_unicode(path))
+		res = lib._wchdir((assert(win_utf8_to_wchar(path))))
 	else
 		res = unistdlib.chdir(path)
 	end
@@ -569,7 +577,7 @@ function _M.mkdir(path, mode)
 	assert(type(path) == 'string', 'expected string')
 	local res
 	if ffi.os == 'Windows' and _M.unicode then
-		res = lib._wmkdir(win_utf8_to_unicode(path))
+		res = lib._wmkdir((assert(win_utf8_to_wchar(path))))
 	elseif ffi.os == 'Window' then
 		res = lib.mkdir(path)	-- TODO if this is a wrapper on windows then I can pass the mode in here.  no separate case.
 	else
@@ -583,7 +591,7 @@ function _M.rmdir(path)
 	assert(type(path) == 'string', 'expected string')
 	local res
 	if ffi.os == 'Windows' and _M.unicode then
-		res = lib._wrmdir(win_utf8_to_unicode(path))
+		res = lib._wrmdir((assert(win_utf8_to_wchar(path))))
 	else
 		res = unistdlib.rmdir(path)
 	end
@@ -598,26 +606,27 @@ local create_lockfile
 local delete_lockfile
 
 if ffi.os == 'Windows' then
-	ffi.cdef([[
-		typedef const wchar_t* LPCWSTR;
-		typedef struct _SECURITY_ATTRIBUTES {
-			DWORD nLength;
-			void *lpSecurityDescriptor;
-			int bInheritHandle;
-		} SECURITY_ATTRIBUTES;
-		typedef SECURITY_ATTRIBUTES *LPSECURITY_ATTRIBUTES;
-		void *CreateFileW(
-			LPCWSTR lpFileName,
-			DWORD dwDesiredAccess,
-			DWORD dwShareMode,
-			LPSECURITY_ATTRIBUTES lpSecurityAttributes,
-			DWORD dwCreationDisposition,
-			DWORD dwFlagsAndAttributes,
-			void *hTemplateFile
-		);
+	ffi.cdef[[
+typedef const wchar_t* LPCWSTR;
+typedef struct _SECURITY_ATTRIBUTES {
+	DWORD nLength;
+	void *lpSecurityDescriptor;
+	int bInheritHandle;
+} SECURITY_ATTRIBUTES;
+typedef SECURITY_ATTRIBUTES *LPSECURITY_ATTRIBUTES;
 
-		int CloseHandle(void *hObject);
-	]])
+void *CreateFileW(
+	LPCWSTR lpFileName,
+	DWORD dwDesiredAccess,
+	DWORD dwShareMode,
+	LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+	DWORD dwCreationDisposition,
+	DWORD dwFlagsAndAttributes,
+	void *hTemplateFile
+);
+
+int CloseHandle(void *hObject);
+	]]
 
 	local GENERIC_WRITE = 0x40000000
 	local CREATE_NEW = 1
@@ -682,7 +691,7 @@ local stat_func, lstat_func
 if ffi.os == 'Windows' then
 	stat_func = function(filepath, buf)
 		if _M.unicode then
-			return lib._wstat64(win_utf8_to_unicode(filepath), buf)
+			return lib._wstat64(assert(win_utf8_to_wchar(filepath)), buf)
 		else
 			return lib._stat64(filepath, buf)
 		end
