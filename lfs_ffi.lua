@@ -55,7 +55,6 @@ local statlib = require 'ffi.c.sys.stat'
 
 -- sys/syslimits.h
 local MAXPATH_UNC = 32760
-local HAVE_WFINDFIRST = true
 
 -- misc
 -- Windows-only:
@@ -156,7 +155,7 @@ uint32_t FormatMessageA(
 	-- returns an array of wchar_t's & size in wchar_t's
 	-- upon failure returns nil and error message
 	function win_utf8_to_wchar(szUtf8)
-		local dwFlags = _M.unicode_errors and MB_ERR_INVALID_CHARS or 0
+		local dwFlags = _M.wchar_errors and MB_ERR_INVALID_CHARS or 0
 		local nLenWchar = lib.MultiByteToWideChar(CP_UTF8, dwFlags, szUtf8, -1, nil, 0)
 		if nLenWchar == 0 then return nil, errorMsgWin(2) end
 		local szUnicode = ffi.new("wchar_t[?]", nLenWchar)
@@ -169,7 +168,7 @@ uint32_t FormatMessageA(
 	-- returns a Lua string
 	-- upon failure returns nil and error message
 	function win_wchar_to_utf8(szUnicode)
-		local dwFlags = _M.unicode_errors and WC_ERR_INVALID_CHARS or 0
+		local dwFlags = _M.wchar_errors and WC_ERR_INVALID_CHARS or 0
 		local nLen = lib.WideCharToMultiByte(CP_UTF8, dwFlags, szUnicode, -1, nil, 0, nil, nil)
 		if nLen == 0 then return nil, errorMsgWin(2) end
 		local str = ffi.new("char[?]",nLen)
@@ -184,7 +183,7 @@ uint32_t FormatMessageA(
 	-- upon failure returns nil and error message
 	function _M.win_utf8_to_acp(utf)
 		local szUnicode = assert(win_utf8_to_wchar(utf))
-		local dwFlags = _M.unicode_errors and WC_ERR_INVALID_CHARS or 0
+		local dwFlags = _M.wchar_errors and WC_ERR_INVALID_CHARS or 0
 		local nLen = lib.WideCharToMultiByte(CP_ACP, dwFlags, szUnicode, -1, nil, 0, nil, nil)
 		if nLen == 0 then return nil, errorMsgWin(2) end
 		local str = ffi.new("char[?]",nLen)
@@ -311,7 +310,7 @@ uint32_t FormatMessageA(
 	end
 
 	function _M.dir(path)
-		if _M.unicode then
+		if _M.use_wchar then
 			return _M.wdir(path)
 		else
 			return _M.sdir(path)
@@ -540,8 +539,8 @@ function _M.touch(path, actime, modtime)
 end
 
 function _M.currentdir()
-	if ffi.os == 'Windows' and _M.unicode then
-		local buf = ffi.new("wchar_t[?]",MAXPATH_UNC)
+	if ffi.os == 'Windows' and _M.use_wchar then
+		local buf = ffi.new("wchar_t[?]", MAXPATH_UNC)
 		if lib._wgetcwd(buf, MAXPATH_UNC) ~= nil then
 			return win_wchar_to_utf8(buf)
 		end
@@ -564,7 +563,7 @@ end
 function _M.chdir(path)
 	assert(type(path) == 'string', 'expected string')
 	local res
-	if ffi.os == 'Windows' and _M.unicode then
+	if ffi.os == 'Windows' and _M.use_wchar then
 		res = lib._wchdir((assert(win_utf8_to_wchar(path))))
 	else
 		res = unistdlib.chdir(path)
@@ -576,7 +575,7 @@ end
 function _M.mkdir(path, mode)
 	assert(type(path) == 'string', 'expected string')
 	local res
-	if ffi.os == 'Windows' and _M.unicode then
+	if ffi.os == 'Windows' and _M.use_wchar then
 		res = lib._wmkdir((assert(win_utf8_to_wchar(path))))
 	elseif ffi.os == 'Window' then
 		res = lib.mkdir(path)	-- TODO if this is a wrapper on windows then I can pass the mode in here.  no separate case.
@@ -590,7 +589,7 @@ end
 function _M.rmdir(path)
 	assert(type(path) == 'string', 'expected string')
 	local res
-	if ffi.os == 'Windows' and _M.unicode then
+	if ffi.os == 'Windows' and _M.use_wchar then
 		res = lib._wrmdir((assert(win_utf8_to_wchar(path))))
 	else
 		res = unistdlib.rmdir(path)
@@ -686,23 +685,19 @@ function _M.lock_dir(path, _)
 end
 
 -- stat related
-local stattype
-local stat_func, lstat_func
-if ffi.os == 'Windows' then
-	stat_func = function(filepath, buf)
-		if _M.unicode then
-			return lib._wstat64(assert(win_utf8_to_wchar(filepath)), buf)
-		else
-			return lib._stat64(filepath, buf)
-		end
+local function stat_func(filepath, buf)
+	if ffi.os == 'Windows' and _M.use_wchar then
+		return lib._wstat64(assert(win_utf8_to_wchar(filepath)), buf)
+	else
+		return statlib.stat(filepath, buf)
 	end
+end
+
+local lstat_func
+if ffi.os == 'Windows' then
 	lstat_func = stat_func
-	-- Windows, whhyyy do you have a fluly separate 'struct stat'?!?!?!
-	stattype = 'struct _stat64'
 else	-- Linux, OSX, BSD, etc
-	stat_func = lib.stat
-	lstat_func = lib.lstat
-	stattype = 'struct stat'
+	lstat_func = statlib.lstat
 end
 
 -- Linux has these in sys/stat.h prefixed  __S_I
@@ -775,7 +770,7 @@ local attr_handlers = {
 	uid = function(st) return tonumber(st.st_uid) end,
 }
 -- TODO move this into ffi.c.sys.stat (per respective OS)
-local stat_type = ffi.metatype(stattype, {
+local stat_type = ffi.metatype(statlib.struct_stat, {
 	__index = function(self, attr_name)
 		local func = attr_handlers[attr_name]
 		return func and func(self)
@@ -822,7 +817,7 @@ local function attributes(filepath, attr, follow_symlink)
 			value = buf[attr]
 		end
 		if value == nil then
-			error("invalid attribute name '" .. attr .. "'")
+			error("invalid attribute name '"..attr.."'")
 		end
 		return value
 	else
@@ -845,9 +840,9 @@ function _M.symlinkattributes(filepath, attr)
 	return attributes(filepath, attr, false)
 end
 
-_M.unicode = HAVE_WFINDFIRST
-_M.unicode_errors = false
---this would error with _M.unicode_errors = true
+_M.use_wchar = true
+_M.wchar_errors = false
+--this would error with _M.wchar_errors = true
 --local cad = string.char(0xE0,0x80,0x80)--,0xFD,0xFF)
 
 return _M
