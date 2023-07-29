@@ -394,7 +394,7 @@ else
 	end
 
 	local function iterator(dir)
-		if dir.closed ~= false then error("closed directory") end
+		assert(not dir.closed, "closed directory")
 
 		local entry = lib.readdir(dir._dentry)
 		if entry ~= nil then
@@ -406,16 +406,19 @@ else
 	end
 
 	local dir_obj_type = ffi.metatype([[
-		struct {
-			DIR *_dentry;
-			bool closed;
+struct {
+	DIR *_dentry;
+	bool closed;
+}
+]],
+		{
+			__index = {
+				next = iterator,
+				close = close,
+			},
+			__gc = close
 		}
-	]],
-	{__index = {
-		next = iterator,
-		close = close,
-	}, __gc = close
-	})
+	)
 
 	function _M.dir(path)
 		local dentry = lib.opendir(path)
@@ -424,7 +427,7 @@ else
 		end
 		local dir_obj = ffi.new(dir_obj_type)
 		dir_obj._dentry = dentry
-		dir_obj.closed = false;
+		dir_obj.closed = false
 		return iterator, dir_obj
 	end
 
@@ -465,7 +468,7 @@ else
 
 	ffi.cdef(flock_def..[[
 		// Where?
-		int fcntl(int fd, int cmd, ... /* arg */ )
+		int fcntl(int fd, int cmd, ... /* arg */ );
 	]])
 
 	local function lock(fd, mode, start, len)
