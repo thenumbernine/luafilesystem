@@ -756,16 +756,18 @@ local function time_or_timespec(time, timespec)
 	return t
 end
 
+-- linux __USE_XOPEN2K8 has st_atim st_mtim st_ctim as struct timespec
+-- otherwise it has st_atime st_ctime st_mtime
 local attr_handlers = {
-	access = function(st) return time_or_timespec(st.st_atime, st.st_atimespec) end,
+	access = function(st) return time_or_timespec(st.st_atime, st.st_atimespec or st.st_atim) end,
 	blksize = function(st) return tonumber(st.st_blksize) end,
 	blocks = function(st) return tonumber(st.st_blocks) end,
-	change = function(st) return time_or_timespec(st.st_ctime, st.st_ctimespec) end,
+	change = function(st) return time_or_timespec(st.st_ctime, st.st_ctimespec or st.st_ctim) end,
 	dev = function(st) return tonumber(st.st_dev) end,
 	gid = function(st) return tonumber(st.st_gid) end,
 	ino = function(st) return tonumber(st.st_ino) end,
 	mode = function(st) return mode_to_ftype(st.st_mode) end,
-	modification = function(st) return time_or_timespec(st.st_mtime, st.st_mtimespec) end,
+	modification = function(st) return time_or_timespec(st.st_mtime, st.st_mtimespec or st.st_mtim) end,
 	nlink = function(st) return tonumber(st.st_nlink) end,
 	permissions = function(st) return mode_to_perm(st.st_mode) end,
 	rdev = function(st) return tonumber(st.st_rdev) end,
