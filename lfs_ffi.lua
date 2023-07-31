@@ -1,5 +1,5 @@
-local bit = require "bit"
-local ffi = require "ffi"
+local bit = require 'bit'
+local ffi = require 'ffi'
 
 local lib = ffi.C
 
@@ -19,10 +19,10 @@ local IS_64_BIT = ffi.abi('64bit')
 -- Linux:
 -- sys/types.h has ssize_t
 -- in Windows it's missing, so I wedged it in
-require 'ffi.c.sys.types'
+require 'ffi.req' 'c.sys.types'
 
-require 'ffi.c.string'	-- strerror
-local errnolib = require 'ffi.c.errno'
+require 'ffi.req' 'c.string'	-- strerror
+local errnolib = require 'ffi.req' 'c.errno'
 
 local function errnostr()
 	return ffi.string(lib.strerror(ffi.errno()))
@@ -35,23 +35,23 @@ end
 -- ... and fileno alias
 -- Linux:
 -- fileno
-local stdiolib = require 'ffi.c.stdio'
+local stdiolib = require 'ffi.req' 'c.stdio'
 
 -- Windows:
 -- _getcwd, _wgetcwd, _chdir, _wchdir, _rmdir, _wrmdir, _mkdir, _wmkdir
---require 'ffi.c.direct'
+--require 'ffi.req' 'c.direct'
 -- hmm, how come I see the non-_ names here too?  do I not need a lua alias?
 -- Linux:
 -- getcwd, chdir, rmdir, link, symlink, unlink, syscall, readlink
 -- the ffi.c.uinstd file on Windows will instead return ffi.Windows.c.direct
-local unistdlib = require 'ffi.c.unistd'
+local unistdlib = require 'ffi.req' 'c.unistd'
 
 -- Windows
 -- struct stat, _stat64, _wstat64
 -- includes a require ffi.Windows.c.direct, which defines mkdir() (not just _mkdir?)
 -- Linux:
 -- struct stat, stat, lstat, mkdir
-local statlib = require 'ffi.c.sys.stat'
+local statlib = require 'ffi.req' 'c.sys.stat'
 
 -- sys/syslimits.h
 local MAXPATH_UNC = 32760
@@ -63,12 +63,12 @@ if ffi.os == "Windows" then
    	-- in Windows:
 	-- wchar.h -> corecrt_wio.h
 	-- mbrtowc, _wfindfirst, _wfindnext, _wfinddata_t, _wfinddata_i64_t
-	local wiolib = require 'ffi.c.wchar'
+	local wiolib = require 'ffi.req' 'c.wchar'
 
 	-- corecrt_io.h
 	-- _findfirst, _findnext, _finddata_t, _finddata_i64_t
 	-- _setmode, _locking
-	local iolib = require 'ffi.c.io'
+	local iolib = require 'ffi.req' 'c.io'
 
 	function wchar_t(s)
 		local mbstate = ffi.new('mbstate_t[1]')
@@ -383,7 +383,7 @@ else
 
 	-- Linux:
 	-- struct dirent, DIR, opendir, readdir, closedir
-	require 'ffi.c.dirent'
+	require 'ffi.req' 'c.dirent'
 
 	local function close(dir)
 		if dir._dentry ~= nil then
@@ -521,7 +521,7 @@ end
 -- Linux:
 -- utime.h:
 -- struct utimbuf, utime
-local utimelib = require 'ffi.c.sys.utime'
+local utimelib = require 'ffi.req' 'c.sys.utime'
 function _M.touch(path, actime, modtime)
 	local buf
 
