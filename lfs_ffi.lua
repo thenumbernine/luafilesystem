@@ -132,7 +132,7 @@ uint32_t FormatMessageA(
 );
 ]]
 	-- Some helper functions
-	
+
 	-- returns the Windows error message for the specified error
 	local function errorMsgWin(lvl)
 		local errcode = ffi.C.GetLastError()
@@ -150,7 +150,7 @@ uint32_t FormatMessageA(
 	local CP_UTF8 = 65001
 	local WC_ERR_INVALID_CHARS = 0x00000080
 	local MB_ERR_INVALID_CHARS  = 0x00000008
-	
+
 	-- TODO ... unicode_to_wchar ?
 	-- returns an array of wchar_t's & size in wchar_t's
 	-- upon failure returns nil and error message
@@ -164,7 +164,7 @@ uint32_t FormatMessageA(
 		return szUnicode, nLenWchar
 	end
 	_M.win_utf8_to_wchar = win_utf8_to_wchar
-	
+
 	-- returns a Lua string
 	-- upon failure returns nil and error message
 	function win_wchar_to_utf8(szUnicode)
@@ -177,7 +177,7 @@ uint32_t FormatMessageA(
 		return ffi.string(str)
 	end
 	_M.win_wchar_to_utf8 = win_wchar_to_utf8
-	
+
 	local CP_ACP = 0
 	-- returns a Lua string
 	-- upon failure returns nil and error message
@@ -748,101 +748,117 @@ local function mode_to_perm(mode)
 	return table.concat(perm)
 end
 
-local function time_or_timespec(time, timespec)
-	local t = tonumber(time)
-	if not t and timespec then
-		t = tonumber(timespec.tv_sec)
+do
+	local function time_or_timespec(time, timespec)
+		local t = tonumber(time)
+		if not t and timespec then
+			t = tonumber(timespec.tv_sec)
+		end
+		return t
 	end
-	return t
-end
 
--- linux __USE_XOPEN2K8 has st_atim st_mtim st_ctim as struct timespec
--- otherwise it has st_atime st_ctime st_mtime
-local attr_handlers = {
-	access = function(st) return time_or_timespec(st.st_atime, st.st_atimespec or st.st_atim) end,
-	blksize = function(st) return tonumber(st.st_blksize) end,
-	blocks = function(st) return tonumber(st.st_blocks) end,
-	change = function(st) return time_or_timespec(st.st_ctime, st.st_ctimespec or st.st_ctim) end,
-	dev = function(st) return tonumber(st.st_dev) end,
-	gid = function(st) return tonumber(st.st_gid) end,
-	ino = function(st) return tonumber(st.st_ino) end,
-	mode = function(st) return mode_to_ftype(st.st_mode) end,
-	modification = function(st) return time_or_timespec(st.st_mtime, st.st_mtimespec or st.st_mtim) end,
-	nlink = function(st) return tonumber(st.st_nlink) end,
-	permissions = function(st) return mode_to_perm(st.st_mode) end,
-	rdev = function(st) return tonumber(st.st_rdev) end,
-	size = function(st) return tonumber(st.st_size) end,
-	uid = function(st) return tonumber(st.st_uid) end,
-}
--- TODO move this into ffi.c.sys.stat (per respective OS)
-local stat_type = ffi.metatype(statlib.struct_stat, {
-	__index = function(self, attr_name)
+	-- linux __USE_XOPEN2K8 has st_atim st_mtim st_ctim as struct timespec
+	-- otherwise it has st_atime st_ctime st_mtime
+	local attr_handlers = {
+		blksize = function(st) return tonumber(st.st_blksize) end,
+		blocks = function(st) return tonumber(st.st_blocks) end,
+		dev = function(st) return tonumber(st.st_dev) end,
+		gid = function(st) return tonumber(st.st_gid) end,
+		ino = function(st) return tonumber(st.st_ino) end,
+		mode = function(st) return mode_to_ftype(st.st_mode) end,
+		nlink = function(st) return tonumber(st.st_nlink) end,
+		permissions = function(st) return mode_to_perm(st.st_mode) end,
+		rdev = function(st) return tonumber(st.st_rdev) end,
+		size = function(st) return tonumber(st.st_size) end,
+		uid = function(st) return tonumber(st.st_uid) end,
+
+		-- timestamps:
+		access = function(st) return time_or_timespec(st.st_atime, st.st_atimespec or st.st_atim) end,
+		change = function(st) return time_or_timespec(st.st_ctime, st.st_ctimespec or st.st_ctim) end,
+		modification = function(st) return time_or_timespec(st.st_mtime, st.st_mtimespec or st.st_mtim) end,
+	}
+	local function stat_index(st, attr_name)
 		local func = attr_handlers[attr_name]
-		return func and func(self)
+		return func and func(st)
 	end
-})
+	-- buf used for attributes()
+	local buf = ffi.new(statlib.struct_stat)
 
--- Add target field for symlinkattributes, which is the absolute path of linked target
-local get_link_target_path
-if ffi.os == 'Windows' then
-	function get_link_target_path()
-		return nil, "could not obtain link target: Function not implemented ", errnolib.ENOSYS
-	end
-else
-	function get_link_target_path(link_path, statbuf)
-		local size = statbuf.st_size
-		size = size == 0 and stdiolib.FILENAME_MAX or size
-		local buf = ffi.new('char[?]', size + 1)
-		local read = lib.readlink(link_path, buf, size)
-		if read == -1 then
-			return nil, "could not obtain link target: "..errnostr(), ffi.errno()
-		end
-		if read > size then
-			return nil, "not enought size for readlink: "..errnostr(), ffi.errno()
-		end
-		buf[size] = 0
-		return ffi.string(buf)
-	end
-end
-
-local buf = ffi.new(stat_type)
-local function attributes(filepath, attr, follow_symlink)
-	local func = follow_symlink and stat_func or lstat_func
-	if func(filepath, buf) == -1 then
-		return nil, string.format("cannot obtain information from file '%s' : %s", tostring(filepath), errnostr()), ffi.errno()
+	-- here I'm breaking/extending lfs convention to support full 64 bit, and nanosecond, time values:
+	-- only add these functions if the fields are present ...
+	if pcall(function() return buf.st_atim.tv_nsec ~= nil end) then
+		-- so how to expose nsec access?
+		-- as a second parameter? (maybe lua api compat issues)
+		-- as the decimal portion? (compat issues + resolution issues)
+		-- as separate functions? (clunky but best) ... and as cdata at that (so we don't lose any of the 64 bits...)
+		-- store ns here (all 64 bits)
+		-- leave it up to the user to access tv_sec and tv_nsec separately (to be sure they don't get split up / get stored out of sync of one another) 
+		attr_handlers.access_ns = function(st) return ffi.new('struct timespec', st.st_atim) end
+		attr_handlers.change_ns = function(st) return ffi.new('struct timespec', st.st_ctim) end
+		attr_handlers.modification_ns = function(st) return ffi.new('struct timespec', st.st_mtim) end
 	end
 
-	local atype = type(attr)
-	if atype == 'string' then
-		local value, err, errn
-		if attr == 'target' and not follow_symlink then
-			value, err, errn = get_link_target_path(filepath, buf)
-			return value, err, errn
-		else
-			value = buf[attr]
+	-- Add target field for symlinkattributes, which is the absolute path of linked target
+	local get_link_target_path
+	if ffi.os == 'Windows' then
+		function get_link_target_path()
+			return nil, "could not obtain link target: Function not implemented ", errnolib.ENOSYS
 		end
-		if value == nil then
-			error("invalid attribute name '"..attr.."'")
-		end
-		return value
 	else
-		local tab = (atype == 'table') and attr or {}
-		for k, _ in pairs(attr_handlers) do
-			tab[k] = buf[k]
+		function get_link_target_path(link_path, statbuf)
+			local size = statbuf.st_size
+			size = size == 0 and stdiolib.FILENAME_MAX or size
+			local buf = ffi.new('char[?]', size + 1)
+			local read = lib.readlink(link_path, buf, size)
+			if read == -1 then
+				return nil, "could not obtain link target: "..errnostr(), ffi.errno()
+			end
+			if read > size then
+				return nil, "not enought size for readlink: "..errnostr(), ffi.errno()
+			end
+			buf[size] = 0
+			return ffi.string(buf)
 		end
-		if not follow_symlink then
-			tab.target = get_link_target_path(filepath, buf)
-		end
-		return tab
 	end
-end
 
-function _M.attributes(filepath, attr)
-	return attributes(filepath, attr, true)
-end
+	local function attributes(filepath, attr, follow_symlink)
+		local func = follow_symlink and stat_func or lstat_func
+		if func(filepath, buf) == -1 then
+			return nil, string.format("cannot obtain information from file '%s' : %s", tostring(filepath), errnostr()), ffi.errno()
+		end
 
-function _M.symlinkattributes(filepath, attr)
-	return attributes(filepath, attr, false)
+		local atype = type(attr)
+		if atype == 'string' then
+			local value, err, errn
+			if attr == 'target' and not follow_symlink then
+				value, err, errn = get_link_target_path(filepath, buf)
+				return value, err, errn
+			else
+				value = stat_index(buf, attr)
+			end
+			if value == nil then
+				error("invalid attribute name '"..attr.."'")
+			end
+			return value
+		else
+			local tab = (atype == 'table') and attr or {}
+			for k, _ in pairs(attr_handlers) do
+				tab[k] = stat_index(buf, k)
+			end
+			if not follow_symlink then
+				tab.target = get_link_target_path(filepath, buf)
+			end
+			return tab
+		end
+	end
+
+	function _M.attributes(filepath, attr)
+		return attributes(filepath, attr, true)
+	end
+
+	function _M.symlinkattributes(filepath, attr)
+		return attributes(filepath, attr, false)
+	end
 end
 
 _M.use_wchar = true
