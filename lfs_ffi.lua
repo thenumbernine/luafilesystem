@@ -734,7 +734,7 @@ local function mode_to_ftype(mode)
 end
 
 local function mode_to_perm(mode)
-	local perm_bits = bit.band(mode, tonumber(777, 8))
+	local perm_bits = bit.band(mode, 511)	-- 511 == tonumber('777', 8)
 	local perm = new_tab(9, 0)
 	local i = 9
 	while i > 0 do
