@@ -13,9 +13,6 @@ local _M = {
 	_VERSION = "0.1",
 }
 
--- common utils/constants
-local IS_64_BIT = ffi.abi('64bit')
-
 -- Linux:
 -- sys/types.h has ssize_t
 -- in Windows it's missing, so I wedged it in
@@ -705,6 +702,7 @@ end
 
 -- Linux has these in sys/stat.h prefixed  __S_I
 -- Windows has these in sys/stat.h prefixed _S_I
+-- OSX has these in sys/stat.h prefixed S_I
 -- and Windows is missing FSOCK, FLNK, FBLK
 -- Maybe move this to ffi.c.sys.stat?
 local STAT = {
@@ -719,12 +717,12 @@ local STAT = {
 }
 
 local ftype_name_map = {
-	[STAT.FREG]  = 'file',
-	[STAT.FDIR]  = 'directory',
-	[STAT.FLNK]  = 'link',
 	[STAT.FSOCK] = 'socket',
-	[STAT.FCHR]  = 'char device',
+	[STAT.FLNK]  = 'link',
+	[STAT.FREG]  = 'file',
 	[STAT.FBLK]  = "block device",
+	[STAT.FDIR]  = 'directory',
+	[STAT.FCHR]  = 'char device',
 	[STAT.FIFO]  = "named pipe",
 }
 
@@ -779,10 +777,7 @@ do
 		change = function(st) return time_or_timespec(safeindex(st, 'st_ctime'), safeindex(st, 'st_ctimespec') or safeindex(st, 'st_ctim')) end,
 		modification = function(st) return time_or_timespec(safeindex(st, 'st_mtime'), safeindex(st, 'st_mtimespec') or safeindex(st, 'st_mtim')) end,
 	}
-	local function stat_index(st, attr_name)
-		local func = attr_handlers[attr_name]
-		return func and func(st)
-	end
+
 	-- buf used for attributes()
 	local buf = ffi.new(statlib.struct_stat)
 
@@ -794,7 +789,7 @@ do
 		-- as the decimal portion? (compat issues + resolution issues)
 		-- as separate functions? (clunky but best) ... and as cdata at that (so we don't lose any of the 64 bits...)
 		-- store ns here (all 64 bits)
-		-- leave it up to the user to access tv_sec and tv_nsec separately (to be sure they don't get split up / get stored out of sync of one another) 
+		-- leave it up to the user to access tv_sec and tv_nsec separately (to be sure they don't get split up / get stored out of sync of one another)
 		attr_handlers.access_ns = function(st) return ffi.new('struct timespec', st.st_atim) end
 		attr_handlers.change_ns = function(st) return ffi.new('struct timespec', st.st_ctim) end
 		attr_handlers.modification_ns = function(st) return ffi.new('struct timespec', st.st_mtim) end
@@ -803,11 +798,11 @@ do
 	-- Add target field for symlinkattributes, which is the absolute path of linked target
 	local get_link_target_path
 	if ffi.os == 'Windows' then
-		function get_link_target_path()
+		get_link_target_path = function()
 			return nil, "could not obtain link target: Function not implemented ", errnolib.ENOSYS
 		end
 	else
-		function get_link_target_path(link_path, statbuf)
+		get_link_target_path = function(link_path, statbuf)
 			local size = statbuf.st_size
 			size = size == 0 and stdiolib.FILENAME_MAX or size
 			local buf = ffi.new('char[?]', size + 1)
@@ -823,6 +818,10 @@ do
 		end
 	end
 
+	local function safecall(f, ...)
+		return f and f(...)
+	end
+
 	local function attributes(filepath, attr, follow_symlink)
 		local func = follow_symlink and stat_func or lstat_func
 		if func(filepath, buf) == -1 then
@@ -836,7 +835,7 @@ do
 				value, err, errn = get_link_target_path(filepath, buf)
 				return value, err, errn
 			else
-				value = stat_index(buf, attr)
+				value = safecall(attr_handlers[attr], buf)
 			end
 			if value == nil then
 				error("invalid attribute name '"..attr.."'")
@@ -845,7 +844,7 @@ do
 		else
 			local tab = (atype == 'table') and attr or {}
 			for k, _ in pairs(attr_handlers) do
-				tab[k] = stat_index(buf, k)
+				tab[k] = safecall(attr_handlers[k], buf)
 			end
 			if not follow_symlink then
 				tab.target = get_link_target_path(filepath, buf)
