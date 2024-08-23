@@ -380,11 +380,11 @@ else
 
 	-- Linux:
 	-- struct dirent, DIR, opendir, readdir, closedir
-	local direntlib = require 'ffi.req' 'c.dirent'
+	require 'ffi.req' 'c.dirent'
 
 	local function close(dir)
 		if dir._dentry ~= nil then
-			direntlib.closedir(dir._dentry)
+			lib.closedir(dir._dentry)
 			dir._dentry = nil
 			dir.closed = true
 		end
@@ -393,7 +393,7 @@ else
 	local function iterator(dir)
 		assert(not dir.closed, "closed directory")
 
-		local entry = direntlib.readdir(dir._dentry)
+		local entry = lib.readdir(dir._dentry)
 		if entry ~= nil then
 			return ffi.string(entry.d_name)
 		else
@@ -418,7 +418,7 @@ struct {
 	)
 
 	function _M.dir(path)
-		local dentry = direntlib.opendir(path)
+		local dentry = lib.opendir(path)
 		if dentry == nil then
 			error("cannot open "..path.." : "..errnostr())
 		end
