@@ -323,15 +323,15 @@ uint32_t FormatMessageA(
 	local function lock(fh, mode, start, len)
 		local lkmode = mode_ltype_map[mode]
 		if not len or len <= 0 then
-			if lib.fseek(fh, 0, stdiolib.SEEK_END) ~= 0 then
+			if stdiolib.fseek(fh, 0, stdiolib.SEEK_END) ~= 0 then
 				return nil, errnostr()
 			end
-			len = lib.ftell(fh)
+			len = stdiolib.ftell(fh)
 		end
 		if not start or start <= 0 then
 			start = 0
 		end
-		if lib.fseek(fh, start, stdiolib.SEEK_SET) ~= 0 then
+		if stdiolib.fseek(fh, start, stdiolib.SEEK_SET) ~= 0 then
 			return nil, errnostr()
 		end
 		local fd = stdiolib.fileno(fh)
@@ -371,7 +371,7 @@ else
 	end
 
 	function _M.link(old, new, symlink)
-		local f = symlink and lib.symlink or lib.link
+		local f = symlink and unistdlib.symlink or unistdlib.link
 		if f(old, new) == 0 then
 			return true
 		end
@@ -380,11 +380,11 @@ else
 
 	-- Linux:
 	-- struct dirent, DIR, opendir, readdir, closedir
-	require 'ffi.req' 'c.dirent'
+	local direntlib = require 'ffi.req' 'c.dirent'
 
 	local function close(dir)
 		if dir._dentry ~= nil then
-			lib.closedir(dir._dentry)
+			direntlib.closedir(dir._dentry)
 			dir._dentry = nil
 			dir.closed = true
 		end
@@ -393,7 +393,7 @@ else
 	local function iterator(dir)
 		assert(not dir.closed, "closed directory")
 
-		local entry = lib.readdir(dir._dentry)
+		local entry = direntlib.readdir(dir._dentry)
 		if entry ~= nil then
 			return ffi.string(entry.d_name)
 		else
@@ -413,12 +413,12 @@ struct {
 				next = iterator,
 				close = close,
 			},
-			__gc = close
+			__gc = close,
 		}
 	)
 
 	function _M.dir(path)
-		local dentry = lib.opendir(path)
+		local dentry = direntlib.opendir(path)
 		if dentry == nil then
 			error("cannot open "..path.." : "..errnostr())
 		end
@@ -575,12 +575,14 @@ end
 function _M.mkdir(path, mode)
 	assert(type(path) == 'string', 'expected string')
 	local res
-	if ffi.os == 'Windows' and _M.use_wchar then
-		res = lib._wmkdir((assert(win_utf8_to_wchar(path))))
-	elseif ffi.os == 'Window' then
-		res = lib.mkdir(path)	-- TODO if this is a wrapper on windows then I can pass the mode in here.  no separate case.
+	if ffi.os == 'Windows' then
+		if _M.use_wchar then
+			res = lib._wmkdir((assert(win_utf8_to_wchar(path))))
+		else
+			res = lib.mkdir(path)	-- TODO if this is a wrapper on windows then I can pass the mode in here.  no separate case.
+		end
 	else
-		res = lib.mkdir(path, mode or 509)
+		res = statlib.mkdir(path, mode or 509)
 	end
 	if res == 0 then return true end
 	return nil, errnostr()
@@ -648,11 +650,11 @@ else
 	function create_lockfile(dir_lock, path, lockname)
 		dir_lock.lockname = ffi.new('char[?]', #lockname + 1)
 		ffi.copy(dir_lock.lockname, lockname)
-		return lib.symlink(path, lockname) == 0
+		return unistdlib.symlink(path, lockname) == 0
 	end
 
 	function delete_lockfile(dir_lock)
-		return lib.unlink(dir_lock.lockname)
+		return unistdlib.unlink(dir_lock.lockname)
 	end
 end
 
@@ -806,7 +808,7 @@ do
 			local size = statbuf.st_size
 			size = size == 0 and stdiolib.FILENAME_MAX or size
 			local buf = ffi.new('char[?]', size + 1)
-			local read = lib.readlink(link_path, buf, size)
+			local read = unistdlib.readlink(link_path, buf, size)
 			if read == -1 then
 				return nil, "could not obtain link target: "..errnostr(), ffi.errno()
 			end
