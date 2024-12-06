@@ -430,46 +430,23 @@ struct {
 
 	local F_SETLK = (ffi.os == 'Linux') and 6 or 8
 	local mode_ltype_map
-	local flock_def
 	if ffi.os == 'Linux' then
-		flock_def = [[
-			struct flock {
-				short int l_type;
-				short int l_whence;
-				int64_t l_start;
-				int64_t l_len;
-				int l_pid;
-			};
-		]]
 		mode_ltype_map = {
 			r = 0, -- F_RDLCK
 			w = 1, -- F_WRLCK
 			u = 2, -- F_UNLCK
 		}
 	else
-		flock_def = [[
-			struct flock {
-				int64_t l_start;
-				int64_t l_len;
-				int32_t l_pid;
-				short   l_type;
-				short   l_whence;
-			};
-		]]
 		mode_ltype_map = {
 			r = 1, -- F_RDLCK
 			u = 2, -- F_UNLCK
 			w = 3, -- F_WRLCK
 		}
 	end
-
-	ffi.cdef(flock_def..[[
-		// Where?
-		int fcntl(int fd, int cmd, ... /* arg */ );
-	]])
+	require 'ffi.req' 'c.fcntl'	-- 'struct flock'
 
 	local function lock(fd, mode, start, len)
-		local flock = ffi.new('struct flock')
+		local flock = ffi.new'struct flock'
 		flock.l_type = mode_ltype_map[mode]
 		flock.l_whence = stdiolib.SEEK_SET
 		flock.l_start = start or 0
@@ -795,6 +772,11 @@ do
 		attr_handlers.access_ns = function(st) return ffi.new('struct timespec', st.st_atim) end
 		attr_handlers.change_ns = function(st) return ffi.new('struct timespec', st.st_ctim) end
 		attr_handlers.modification_ns = function(st) return ffi.new('struct timespec', st.st_mtim) end
+	elseif pcall(function() return buf.st_atimespec.tv_nsec ~= nil end) then
+		-- and same but for OSX ...
+		attr_handlers.access_ns = function(st) return ffi.new('struct timespec', st.st_atimespec) end
+		attr_handlers.change_ns = function(st) return ffi.new('struct timespec', st.st_ctimespec) end
+		attr_handlers.modification_ns = function(st) return ffi.new('struct timespec', st.st_mtimespec) end
 	end
 
 	-- Add target field for symlinkattributes, which is the absolute path of linked target
