@@ -428,22 +428,12 @@ struct {
 		return iterator, dir_obj
 	end
 
-	local F_SETLK = (ffi.os == 'Linux') and 6 or 8
-	local mode_ltype_map
-	if ffi.os == 'Linux' then
-		mode_ltype_map = {
-			r = 0, -- F_RDLCK
-			w = 1, -- F_WRLCK
-			u = 2, -- F_UNLCK
-		}
-	else
-		mode_ltype_map = {
-			r = 1, -- F_RDLCK
-			u = 2, -- F_UNLCK
-			w = 3, -- F_WRLCK
-		}
-	end
-	require 'ffi.req' 'c.fcntl'	-- 'struct flock'
+	local fcntllib = require 'ffi.req' 'c.fcntl'	-- 'struct flock'
+	local mode_ltype_map = {
+		r = fcntllib.F_RDLCK,
+		w = fcntllib.F_WRLCK,
+		u = fcntllib.F_UNLCK,
+	}
 
 	local function lock(fd, mode, start, len)
 		local flock = ffi.new'struct flock'
@@ -451,7 +441,7 @@ struct {
 		flock.l_whence = stdiolib.SEEK_SET
 		flock.l_start = start or 0
 		flock.l_len = len or 0
-		if lib.fcntl(fd, F_SETLK, flock) == -1 then
+		if fcntllib.fcntl(fd, fcntllib.F_SETLK, flock) == -1 then
 			return nil, errnostr()
 		end
 		return true
