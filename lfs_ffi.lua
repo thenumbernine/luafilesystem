@@ -57,7 +57,7 @@ local MAXPATH_UNC = 32760
 -- Windows-only:
 local wchar_t, win_utf8_to_wchar, win_wchar_to_utf8
 if ffi.os == "Windows" then
-   	-- in Windows:
+	-- in Windows:
 	-- wchar.h -> corecrt_wio.h
 	-- mbrtowc, _wfindfirst, _wfindnext, _wfinddata_t, _wfinddata_i64_t
 	local wiolib = require 'ffi.req' 'c.wchar'
@@ -85,16 +85,22 @@ if ffi.os == "Windows" then
 	end
 
 	ffi.cdef[[
+// https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types
+// ... says LPTSTR is in WinNT.h
 typedef wchar_t* LPTSTR;
+// ... says BOOLEAN is in WinNT.h
 typedef unsigned char BOOLEAN;
+// ... says DWORD is in IntSafe.h
 typedef unsigned long DWORD;
+
+// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw says it is in WinBase.h
 BOOLEAN CreateSymbolicLinkW(
 	LPTSTR lpSymlinkFileName,
 	LPTSTR lpTargetFileName,
 	DWORD dwFlags
 );
 
-// where?
+// https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-widechartomultibyte says it is in stringapiset.h
 int WideCharToMultiByte(
 	unsigned int	 CodePage,
 	DWORD	dwFlags,
@@ -105,7 +111,7 @@ int WideCharToMultiByte(
 	const char*   lpDefaultChar,
 	int*   lpUsedDefaultChar);
 
-// where?
+// https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-multibytetowidechar says it is in stringapiset.h
 int MultiByteToWideChar(
 	unsigned int	 CodePage,
 	DWORD	dwFlags,
@@ -114,10 +120,10 @@ int MultiByteToWideChar(
 	wchar_t*   lpWideCharStr,
 	int	  cchWideChar);
 
-// where?
+// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror says it is in errhandlingapi.h
 uint32_t GetLastError();
 
-// where?
+// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessagea says it is in winbase.h
 uint32_t FormatMessageA(
 	uint32_t dwFlags,
 	const void* lpSource,
@@ -236,7 +242,7 @@ uint32_t FormatMessageA(
 
 	local function iterator(dir)
 		if dir.closed ~= false then error("closed directory") end
-		local entry = ffi.new("_finddata_t")
+		local entry = ffi.new'_finddata_t'
 		if not dir._dentry then
 			dir._dentry = ffi.new(dir_type)
 			dir._dentry.handle = iolib._findfirst(dir._pattern, entry)
@@ -256,7 +262,7 @@ uint32_t FormatMessageA(
 
 	local function witerator(dir)
 		if dir.closed ~= false then error("closed directory") end
-		local entry = ffi.new("_wfinddata_t")
+		local entry = ffi.new'_wfinddata_t'
 		if not dir._dentry then
 			dir._dentry = ffi.new(dir_type)
 			dir._dentry.handle = wiolib._wfindfirst(assert(win_utf8_to_wchar(dir._pattern)), entry)
@@ -633,14 +639,14 @@ local function unlock_dir(dir_lock)
 	return true
 end
 
-local dir_lock_type = ffi.metatype(dir_lock_struct,
-	{__gc = unlock_dir,
+local dir_lock_type = ffi.metatype(dir_lock_struct, {
+	__gc = unlock_dir,
 	__index = {
 		free = unlock_dir,
 		create_lockfile = create_lockfile,
 		delete_lockfile = delete_lockfile,
-	}}
-)
+	},
+})
 
 function _M.lock_dir(path, _)
 	-- It's interesting that the lock_dir from vanilla lfs just ignores second paramter.
