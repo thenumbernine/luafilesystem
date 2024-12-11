@@ -24,10 +24,6 @@ require 'ffi.req' 'c.sys.types'
 require 'ffi.req' 'c.string'	-- strerror
 local errnolib = require 'ffi.req' 'c.errno'
 
-local function errnostr()
-	return ffi.string(lib.strerror(ffi.errno()))
-end
-
 -- Windows and Linux:
 -- FILENAME_MAX, SEEK_SET, SEEK_END
 -- Windows:
@@ -54,7 +50,10 @@ local unistdlib = require 'ffi.req' 'c.unistd'
 local statlib = require 'ffi.req' 'c.sys.stat'
 
 -- sys/syslimits.h
-local MAXPATH_UNC = 32760
+-- https://stackoverflow.com/questions/11025939/maximum-path-constant-for-an-unc-path-on-windows
+-- https://superuser.com/questions/14883/what-is-the-longest-file-path-that-windows-can-handle
+-- is there no 'maxpath' equiv macro for wide-char functions?
+local MAXPATH_UNC = 32767
 
 -- misc
 -- Windows-only:
@@ -208,7 +207,7 @@ uint32_t FormatMessageA(
 		mode = (mode == 'text') and 0x4000 or 0x8000
 		local prev_mode = iolib._setmode(stdiolib.fileno(file), mode)
 		if prev_mode == -1 then
-			return nil, errnostr()
+			return nil, errnolib.str()
 		end
 		return true, (prev_mode == 0x4000) and 'text' or 'binary'
 	end
@@ -224,7 +223,7 @@ uint32_t FormatMessageA(
 				wchar_t(old), is_dir) ~= 0 then
 			return true
 		end
-		return nil, errnostr()
+		return nil, errnolib.str()
 	end
 
 	local function findclose(dentry)
@@ -287,7 +286,7 @@ uint32_t FormatMessageA(
 			dir._dentry.handle = iolib._findfirst(dir._pattern, dir.entry)
 			if dir._dentry.handle == -1 then
 				dir.closed = true
-				return nil, errnostr()
+				return nil, errnolib.str()
 			end
 		else
 			if iolib._findnext(dir._dentry.handle, dir.entry) ~= 0 then
@@ -306,7 +305,7 @@ uint32_t FormatMessageA(
 			dir._dentry.handle = wiolib._wfindfirst(assert(win_utf8_to_wchar(dir._pattern)), dir.entry)
 			if dir._dentry.handle == -1 then
 				dir.closed = true
-				return nil, errnostr()
+				return nil, errnolib.str()
 			end
 		else
 			if wiolib._wfindnext(dir._dentry.handle, dir.entry) ~= 0 then
@@ -371,7 +370,7 @@ uint32_t FormatMessageA(
 		local lkmode = mode_ltype_map[mode]
 		if not len or len <= 0 then
 			if stdiolib.fseek(fh, 0, stdiolib.SEEK_END) ~= 0 then
-				return nil, errnostr()
+				return nil, errnolib.str()
 			end
 			len = stdiolib.ftell(fh)
 		end
@@ -379,11 +378,11 @@ uint32_t FormatMessageA(
 			start = 0
 		end
 		if stdiolib.fseek(fh, start, stdiolib.SEEK_SET) ~= 0 then
-			return nil, errnostr()
+			return nil, errnolib.str()
 		end
 		local fd = stdiolib.fileno(fh)
 		if lib._locking(fd, lkmode, len) == -1 then
-			return nil, errnostr()
+			return nil, errnolib.str()
 		end
 		return true
 	end
@@ -422,7 +421,7 @@ else
 		if f(old, new) == 0 then
 			return true
 		end
-		return nil, errnostr()
+		return nil, errnolib.str()
 	end
 
 	-- Linux:
@@ -467,7 +466,7 @@ struct {
 	function _M.dir(path)
 		local dentry = lib.opendir(path)
 		if dentry == nil then
-			error("cannot open "..path.." : "..errnostr())
+			error("cannot open "..path.." : "..errnolib.str())
 		end
 		local dir_obj = ffi.new(dir_obj_type)
 		dir_obj._dentry = dentry
@@ -489,7 +488,7 @@ struct {
 		flock.l_start = start or 0
 		flock.l_len = len or 0
 		if fcntllib.fcntl(fd, fcntllib.F_SETLK, flock) == -1 then
-			return nil, errnostr()
+			return nil, errnolib.str()
 		end
 		return true
 	end
@@ -549,7 +548,7 @@ function _M.touch(path, actime, modtime)
 	if utimelib.utime(p, buf) == 0 then
 		return true
 	end
-	return nil, errnostr()
+	return nil, errnolib.str()
 end
 
 function _M.currentdir()
@@ -567,7 +566,7 @@ function _M.currentdir()
 				return ffi.string(buf)
 			end
 			if ffi.errno() ~= errnolib.ERANGE then
-				return nil, errnostr()
+				return nil, errnolib.str()
 			end
 			size = size * 2
 		end
@@ -583,7 +582,7 @@ function _M.chdir(path)
 		res = unistdlib.chdir(path)
 	end
 	if res == 0 then return true end
-	return nil, errnostr()
+	return nil, errnolib.str()
 end
 
 function _M.mkdir(path, mode)
@@ -599,7 +598,7 @@ function _M.mkdir(path, mode)
 		res = statlib.mkdir(path, mode or 509)
 	end
 	if res == 0 then return true end
-	return nil, errnostr()
+	return nil, errnolib.str()
 end
 
 function _M.rmdir(path)
@@ -611,7 +610,7 @@ function _M.rmdir(path)
 		res = unistdlib.rmdir(path)
 	end
 	if res == 0 then return true end
-	return nil, errnostr()
+	return nil, errnolib.str()
 end
 
 
@@ -630,6 +629,7 @@ typedef struct _SECURITY_ATTRIBUTES {
 } SECURITY_ATTRIBUTES;
 typedef SECURITY_ATTRIBUTES *LPSECURITY_ATTRIBUTES;
 
+// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew says it's in fileapi.h
 void *CreateFileW(
 	LPCWSTR lpFileName,
 	DWORD dwDesiredAccess,
@@ -640,6 +640,7 @@ void *CreateFileW(
 	void *hTemplateFile
 );
 
+// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle says it's in handleapi.h
 int CloseHandle(void *hObject);
 	]]
 
@@ -695,7 +696,7 @@ function _M.lock_dir(path, _)
 	local dir_lock = ffi.new(dir_lock_type)
 	local lockname = path .. '/lockfile.lfs'
 	if not dir_lock:create_lockfile(path, lockname) then
-		return nil, errnostr()
+		return nil, errnolib.str()
 	end
 	return dir_lock
 end
@@ -819,10 +820,10 @@ do
 			local buf = ffi.new('char[?]', size + 1)
 			local read = unistdlib.readlink(link_path, buf, size)
 			if read == -1 then
-				return nil, "could not obtain link target: "..errnostr(), ffi.errno()
+				return nil, "could not obtain link target: "..errnolib.str(), ffi.errno()
 			end
 			if read > size then
-				return nil, "not enought size for readlink: "..errnostr(), ffi.errno()
+				return nil, "not enought size for readlink: "..errnolib.str(), ffi.errno()
 			end
 			buf[size] = 0
 			return ffi.string(buf)
@@ -836,7 +837,7 @@ do
 	local function attributes(filepath, attr, follow_symlink)
 		local func = follow_symlink and stat_func or lstat_func
 		if func(filepath, buf) == -1 then
-			return nil, string.format("cannot obtain information from file '%s' : %s", tostring(filepath), errnostr()), ffi.errno()
+			return nil, string.format("cannot obtain information from file '%s' : %s", tostring(filepath), errnolib.str()), ffi.errno()
 		end
 
 		local atype = type(attr)
