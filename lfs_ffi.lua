@@ -1,6 +1,9 @@
 local bit = require 'bit'
 local ffi = require 'ffi'
 
+-- using for windows with its missing fields
+local safeindex = require 'ext.op'.safeindex
+
 local lib = ffi.C
 
 local has_table_new, new_tab = pcall(require, "table.new")
@@ -240,50 +243,86 @@ uint32_t FormatMessageA(
 		dir.closed = true
 	end
 
+	-- TODO where do these come from?
+	local dir_attrs = {
+		_A_ARCH = 0x20,
+		_A_HIDDEN = 0x02,
+		_A_NORMAL = 0x00,
+		_A_RDONLY = 0x01,
+		_A_SUBDIR = 0x10,
+		_A_SYSTEM = 0x04
+	}
+
+	local function dir_attr(t, attr)
+		if type(attr) ~= 'string' then --error("dir_attr must have a string") end
+			return {
+				size = t.size,
+				mode = bit.band(t.attrib, dir_attrs._A_SUBDIR) ~= 0 and "directory" or "file",
+			}
+		end
+		if attr == 'mode' then
+			if bit.band(t.attrib, dir_attrs._A_SUBDIR) ~= 0 then
+				return "directory"
+			else
+				return "file"
+			end
+		elseif attr == "size" then
+			return t.size
+		end
+	end
+
+	-- TODO wrapper-class so I don't modify metatype of a ffi/ type...
+	local dentry_type = ffi.metatype('_finddata_t', {
+		__index = {
+				attr = dir_attr,
+			}
+		}
+	)
+
 	local function iterator(dir)
 		if dir.closed ~= false then error("closed directory") end
-		local entry = ffi.new'_finddata_t'
 		if not dir._dentry then
+			dir.entry = ffi.new'_finddata_t'
 			dir._dentry = ffi.new(dir_type)
-			dir._dentry.handle = iolib._findfirst(dir._pattern, entry)
+			dir._dentry.handle = iolib._findfirst(dir._pattern, dir.entry)
 			if dir._dentry.handle == -1 then
 				dir.closed = true
 				return nil, errnostr()
 			end
-			return ffi.string(entry.name)
+		else
+			if iolib._findnext(dir._dentry.handle, dir.entry) ~= 0 then
+				close(dir)
+				return nil
+			end
 		end
-
-		if iolib._findnext(dir._dentry.handle, entry) == 0 then
-			return ffi.string(entry.name)
-		end
-		close(dir)
-		return nil
+		return ffi.string(dir.entry.name), dir.entry
 	end
 
 	local function witerator(dir)
 		if dir.closed ~= false then error("closed directory") end
-		local entry = ffi.new'_wfinddata_t'
 		if not dir._dentry then
+			dir.entry = ffi.new'_wfinddata_t'
 			dir._dentry = ffi.new(dir_type)
-			dir._dentry.handle = wiolib._wfindfirst(assert(win_utf8_to_wchar(dir._pattern)), entry)
+			dir._dentry.handle = wiolib._wfindfirst(assert(win_utf8_to_wchar(dir._pattern)), dir.entry)
 			if dir._dentry.handle == -1 then
 				dir.closed = true
 				return nil, errnostr()
 			end
-			return assert(win_wchar_to_utf8(entry.name))
+		else
+			if wiolib._wfindnext(dir._dentry.handle, dir.entry) ~= 0 then
+				close(dir)
+				return nil
+			end
 		end
-
-		if wiolib._wfindnext(dir._dentry.handle, entry) == 0 then
-			return assert(win_wchar_to_utf8(entry.name))
-		end
-		close(dir)
-		return nil
+		return assert(win_wchar_to_utf8(dir.entry.name)), dir.entry
 	end
 
-	local dirmeta = {__index = {
-		next = iterator,
-		close = close,
-	}}
+	local dirmeta = {
+		__index = {
+			next = iterator,
+			close = close,
+		},
+	}
 
 	function _M.sdir(path)
 		if #path > stdiolib.FILENAME_MAX - 2 then
@@ -296,10 +335,12 @@ uint32_t FormatMessageA(
 		return iterator, dir_obj
 	end
 
-	local wdirmeta = {__index = {
-		next = witerator,
-		close = close,
-	}}
+	local wdirmeta = {
+		__index = {
+			next = witerator,
+			close = close,
+		},
+	}
 
 	function _M.wdir(path)
 		if #path > stdiolib.FILENAME_MAX - 2 then
@@ -675,34 +716,26 @@ else	-- Linux, OSX, BSD, etc
 	lstat_func = statlib.lstat
 end
 
--- Linux has these in sys/stat.h prefixed  __S_I
--- Windows has these in sys/stat.h prefixed _S_I
--- OSX has these in sys/stat.h prefixed S_I
--- and Windows is missing FSOCK, FLNK, FBLK
--- Maybe move this to ffi.c.sys.stat?
-local STAT = {
-	FMT   = 0xF000,
-	FSOCK = 0xC000,
-	FLNK  = 0xA000,
-	FREG  = 0x8000,
-	FBLK  = 0x6000,
-	FDIR  = 0x4000,
-	FCHR  = 0x2000,
-	FIFO  = 0x1000,
-}
-
-local ftype_name_map = {
-	[STAT.FSOCK] = 'socket',
-	[STAT.FLNK]  = 'link',
-	[STAT.FREG]  = 'file',
-	[STAT.FBLK]  = "block device",
-	[STAT.FDIR]  = 'directory',
-	[STAT.FCHR]  = 'char device',
-	[STAT.FIFO]  = "named pipe",
-}
+local ftype_name_map = {}
+for k,name in pairs{
+-- [[ not in Windows ... will Windows return these bits anyways?  should I define them in Windows anyways?
+	S_IFSOCK = 'socket',
+	S_IFLNK  = 'link',
+	S_IFBLK  = "block device",
+	S_IFIFO  = "named pipe",
+--]]
+	S_IFREG  = 'file',
+	S_IFDIR  = 'directory',
+	S_IFCHR  = 'char device',
+} do
+	local v = safeindex(lib, k)
+	if v then
+		ftype_name_map[v] = name
+	end
+end
 
 local function mode_to_ftype(mode)
-	local ftype = bit.band(mode, STAT.FMT)
+	local ftype = bit.band(mode, lib.S_IFMT)
 	return ftype_name_map[ftype] or 'other'
 end
 
@@ -721,8 +754,6 @@ local function mode_to_perm(mode)
 	return table.concat(perm)
 end
 
--- using for windows with its missing fields
-local safeindex = require 'ext.op'.safeindex
 do
 	local function time_or_timespec(time, timespec)
 		local t = tonumber(time)
