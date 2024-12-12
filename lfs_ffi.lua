@@ -55,6 +55,21 @@ local statlib = require 'ffi.req' 'c.sys.stat'
 -- is there no 'maxpath' equiv macro for wide-char functions?
 local MAXPATH_UNC = 32767
 
+
+local DirMetaParent = {}
+DirMetaParent.__index = DirMetaParent
+function DirMetaParent:close()
+	if self.handle then
+		self:findclose(self.handle)
+	end
+	self.handle = nil
+	self.closed = true
+end
+function DirMetaParent:__gc()
+	self:close()
+end
+
+
 -- misc
 -- Windows-only:
 local wchar_t, win_utf8_to_wchar, win_wchar_to_utf8
@@ -226,23 +241,9 @@ uint32_t FormatMessageA(
 		return nil, errnolib.str()
 	end
 
-	local function findclose(dentry)
-		if dentry and dentry.handle ~= -1 then
-			iolib._findclose(dentry.handle)
-			dentry.handle = -1
-		end
-	end
-
-	local dir_type = ffi.metatype("struct {intptr_t handle;}", {
-		__gc = findclose
-	})
-
-	local function close(dir)
-		findclose(dir._dentry)
-		dir.closed = true
-	end
 
 	-- TODO where do these come from?
+	-- msdn says io.h or wchar.h but they weren't generated in my ffi/Windows/c/io.h or wchar.h ...
 	local dir_attrs = {
 		_A_ARCH = 0x20,
 		_A_HIDDEN = 0x02,
@@ -252,105 +253,106 @@ uint32_t FormatMessageA(
 		_A_SYSTEM = 0x04
 	}
 
-	local function dir_attr(t, attr)
-		if type(attr) ~= 'string' then --error("dir_attr must have a string") end
+	local WinDirMetaParent = {}
+	for k,v in pairs(DirMetaParent) do WinDirMeta[k] = v end
+	WinDirMetaParent.__index = WinDirMetaParent
+	function WinDirMetaParent:findclose(...)	-- self isn't needed ... you could just use . instead of : and make this a function assignment ...
+		return iolib._findclose(...)
+	end
+	function WinDirMetaParent:size()
+		return self.finddata.size
+	end
+	function WinDirMetaParent:mode()
+		return bit.band(self.finddata.attrib, dir_attrs._A_SUBDIR) ~= 0 and "directory" or "file"
+	end
+	function WinDirMetaParent:attr()
+		if type(attr) ~= 'string' then
 			return {
-				size = t.size,
-				mode = bit.band(t.attrib, dir_attrs._A_SUBDIR) ~= 0 and "directory" or "file",
+				size = self:size(),
+				mode = self:mode(),
 			}
-		end
-		if attr == 'mode' then
-			if bit.band(t.attrib, dir_attrs._A_SUBDIR) ~= 0 then
-				return "directory"
-			else
-				return "file"
-			end
-		elseif attr == "size" then
-			return t.size
+		elseif attr == 'mode' then
+			return self:mode()
+		elseif attr == 'size' then
+			return self:size()
+		else
+			-- complain?
 		end
 	end
-
-	-- TODO wrapper-class so I don't modify metatype of a ffi/ type...
-	local dentry_type = ffi.metatype('_finddata_t', {
-		__index = {
-				attr = dir_attr,
-			}
-		}
-	)
-
-	local function iterator(dir)
-		if dir.closed ~= false then error("closed directory") end
-		if not dir._dentry then
-			dir.entry = ffi.new'_finddata_t'
-			dir._dentry = ffi.new(dir_type)
-			dir._dentry.handle = iolib._findfirst(dir._pattern, dir.entry)
-			if dir._dentry.handle == -1 then
-				dir.closed = true
+	function WinDirMetaParent:next()
+		assert(not self.closed, "closed directory")
+		if not self.handle then
+			self.handle = self:findfirst()
+			if self.handle == -1 then
+				self.handle = nil
+				self.closed = true
 				return nil, errnolib.str()
 			end
 		else
-			if iolib._findnext(dir._dentry.handle, dir.entry) ~= 0 then
-				close(dir)
+			if self:findnext() ~= 0 then
+				self:close()
 				return nil
 			end
 		end
-		return ffi.string(dir.entry.name), dir.entry
+		return self:name(), self
 	end
 
-	local function witerator(dir)
-		if dir.closed ~= false then error("closed directory") end
-		if not dir._dentry then
-			dir.entry = ffi.new'_wfinddata_t'
-			dir._dentry = ffi.new(dir_type)
-			dir._dentry.handle = wiolib._wfindfirst(assert(win_utf8_to_wchar(dir._pattern)), dir.entry)
-			if dir._dentry.handle == -1 then
-				dir.closed = true
-				return nil, errnolib.str()
-			end
-		else
-			if wiolib._wfindnext(dir._dentry.handle, dir.entry) ~= 0 then
-				close(dir)
-				return nil
-			end
-		end
-		return assert(win_wchar_to_utf8(dir.entry.name)), dir.entry
-	end
 
-	local dirmeta = {
-		__index = {
-			next = iterator,
-			close = close,
-		},
-	}
-
-	function _M.sdir(path)
+	local WinSDirMeta = {}
+	for k,v in pairs(WinDirMetaParent) do WinSDirMeta[k] = v end
+	WinSDirMeta.__index = WinSDirMeta
+	function WinSDirMeta:new(path)	-- self = mt
 		if #path > stdiolib.FILENAME_MAX - 2 then
 			error('path too long: ' .. path)
 		end
-		local dir_obj = setmetatable({
+		return setmetatable({
 			_pattern = path..'/*',
-			closed  = false,
-		}, dirmeta)
-		return iterator, dir_obj
+			finddata = ffi.new'_finddata_t',
+		}, self)
+	end
+	function WinSDirMeta:findfirst()
+		return iolib._findfirst(self._pattern, self.finddata)
+	end
+	function WinSDirMeta:findnext()
+		return iolib._findnext(self.handle, self.finddata)
+	end
+	function WinSDirMeta:name()
+		return ffi.string(self.finddata.name)
 	end
 
-	local wdirmeta = {
-		__index = {
-			next = witerator,
-			close = close,
-		},
-	}
+	function _M.sdir(...)
+		local dir_obj = WinSDirMeta:new(...)
+		return dir_obj.next, dir_obj
+	end
 
-	function _M.wdir(path)
-		if #path > stdiolib.FILENAME_MAX - 2 then
+
+	local WinWDirMeta = {}
+	for k,v in pairs(WinDirMetaParent) do WinWDirMeta[k] = v end
+	WinWDirMeta.__index = WinWDirMeta
+	function WinWDirMeta.new(path)	-- self = mt
+		if #path > MAXPATH_UNC then
 			error('path too long: ' .. path)
 		end
-		local dir_obj = setmetatable({
+		return setmetatable({
 			_pattern = path..'/*',
-			closed  = false,
-		}, wdirmeta)
-		return witerator, dir_obj
+			finddata = ffi.new'_wfinddata_t',
+		}, self)
 	end
+	function WinWDirMeta:findfirst()
+		return wiolib._wfindfirst(assert(win_utf8_to_wchar(self._pattern)), self.finddata)
+	end
+	function WinWDirMeta:findnext()
+		return wiolib._wfindnext(self.handle, self.finddata)
+	end
+	function WinWDirMeta:name()
+		return assert(win_wchar_to_utf8(self.finddata.name))
+	end
+
+	function _M.wdir(...)
+		local dir_obj = WinWDirMeta:new(...)
+		return dir_obj.next, dir_obj
+	end
+
 
 	function _M.dir(path)
 		if _M.use_wchar then
@@ -428,50 +430,32 @@ else
 	-- struct dirent, DIR, opendir, readdir, closedir
 	require 'ffi.req' 'c.dirent'
 
-	local function close(dir)
-		if dir._dentry ~= nil then
-			lib.closedir(dir._dentry)
-			dir._dentry = nil
-			dir.closed = true
-		end
+	local LinuxDirMeta = {}
+	for k,v in pairs(DirMetaParent) do LinuxDirMeta[k] = v end
+	LinuxDirMeta.__index = LinuxDirMeta
+	function LinuxDirMeta:new(path)	-- self = mt
+		return setmetatable({
+			handle = lib.opendir(path) or error("cannot open "..path.." : "..errnolib.str()),
+		}, self)
 	end
-
-	local function iterator(dir)
-		assert(not dir.closed, "closed directory")
-
-		local entry = lib.readdir(dir._dentry)
-		if entry ~= nil then
-			return ffi.string(entry.d_name)
-		else
-			close(dir)
+	function LinuxDirMeta:findclose()	-- called by :close(), which also clears .handle
+		lib.closedir(self.handle)
+	end
+	function LinuxDirMeta:next()
+		assert(not self.closed, "closed directory")
+		local dirent = lib.readdir(self.handle)
+		if dirent == nil then
+			self:close()
 			return nil
 		end
+		return ffi.string(dirent.d_name)	-- , self	-- TODO provide :attr() ?
 	end
+	-- https://stackoverflow.com/questions/26924757/getting-file-size-using-readdir
+	-- seems on POSIX you gotta do a separate call to get mode and size ...
 
-	local dir_obj_type = ffi.metatype([[
-struct {
-	DIR *_dentry;
-	bool closed;
-}
-]],
-		{
-			__index = {
-				next = iterator,
-				close = close,
-			},
-			__gc = close,
-		}
-	)
-
-	function _M.dir(path)
-		local dentry = lib.opendir(path)
-		if dentry == nil then
-			error("cannot open "..path.." : "..errnolib.str())
-		end
-		local dir_obj = ffi.new(dir_obj_type)
-		dir_obj._dentry = dentry
-		dir_obj.closed = false
-		return iterator, dir_obj
+	function _M.dir(...)
+		local dir_obj = LinuxDirMeta:new(...)
+		return dir_obj.next, dir_obj
 	end
 
 	local fcntllib = require 'ffi.req' 'c.fcntl'	-- 'struct flock'

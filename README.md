@@ -24,16 +24,16 @@ On windows `lfs.dir` iterator will provide an extra return that can be used to g
 This is the canonical way to iterate:
 
 ```Lua
-    local sep = "/"
-    for file,obj in lfs.dir(path) do
-        if file ~= "." and file ~= ".." then
-            local f = path..sep..file
-            -- obj wont be nil in windows only
-            local attr = obj and obj:attr() or lfs.attributes (f)
-            assert (type(attr) == "table",f)
-            -- do something with f and attr
-        end
-    end
+local sep = "/"
+for file,obj in lfs.dir(path) do
+	if file ~= "." and file ~= ".." then
+		local f = path..sep..file
+		-- obj wont be nil in windows only
+		local attr = obj and obj:attr() or lfs.attributes (f)
+		assert (type(attr) == "table",f)
+		-- do something with f and attr
+	end
+end
 ```
 
 ## Installation
