@@ -329,7 +329,7 @@ uint32_t FormatMessageA(
 	local WinWDirMeta = {}
 	for k,v in pairs(WinDirMetaParent) do WinWDirMeta[k] = v end
 	WinWDirMeta.__index = WinWDirMeta
-	function WinWDirMeta.new(path)	-- self = mt
+	function WinWDirMeta:new(path)	-- self = mt
 		if #path > MAXPATH_UNC then
 			error('path too long: ' .. path)
 		end
