@@ -254,7 +254,7 @@ uint32_t FormatMessageA(
 	}
 
 	local WinDirMetaParent = {}
-	for k,v in pairs(DirMetaParent) do WinDirMeta[k] = v end
+	for k,v in pairs(DirMetaParent) do WinDirMetaParent[k] = v end
 	WinDirMetaParent.__index = WinDirMetaParent
 	function WinDirMetaParent:findclose(...)	-- self isn't needed ... you could just use . instead of : and make this a function assignment ...
 		return iolib._findclose(...)
