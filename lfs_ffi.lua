@@ -1,3 +1,5 @@
+require 'ext.gc'	-- let luajit setmetatable() also use __gc
+
 local bit = require 'bit'
 local ffi = require 'ffi'
 
