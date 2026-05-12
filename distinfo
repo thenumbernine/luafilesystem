@@ -3,6 +3,8 @@
 --------------------------------------------
 
 name = "lfs_ffi"
+git = "https://github.com/thenumbernine/luafilesystem"
+
 files = {
 	"LICENSE",
 	"README.md",
